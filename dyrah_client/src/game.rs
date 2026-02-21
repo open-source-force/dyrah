@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use bincode::{deserialize, serialize};
 use egor::{
+    app::egui::*,
     input::{Input, KeyCode, MouseButton},
     math::Vec2,
     render::{Color, Graphics},
@@ -34,6 +35,9 @@ pub struct Game {
     player_tex: Option<usize>,
     player: Option<Entity>,
     player_id: Option<NetId>,
+    chat_messages: Vec<(NetId, String)>,
+    chat_input: String,
+    chat_open: bool,
 }
 
 impl Game {
@@ -47,6 +51,9 @@ impl Game {
             player_tex: None,
             player: None,
             player_id: None,
+            chat_messages: Vec::new(),
+            chat_input: String::new(),
+            chat_open: false,
         }
     }
 
@@ -96,28 +103,30 @@ impl Game {
             }
             ServerMessage::PlayerDespawned { id } => {
                 println!("Player {} disappeared", id);
-
                 self.lobby.remove(&id).map(|p| self.world.despawn(p));
             }
             ServerMessage::PlayerMoved { id, position } => {
-                println!("Player {} moving..", id);
-
                 if let Some(&player) = self.lobby.get(&id) {
                     let mut target_pos = self.world.get_mut::<TargetWorldPos>(player).unwrap();
                     target_pos.vec = position;
                 }
             }
+            ServerMessage::ChatReceived { sender_id, text } => {
+                self.chat_messages.push((sender_id, text));
+            }
         }
     }
 
-    pub fn update(&mut self, input: &Input, timer: &FrameTimer) {
+    pub fn update(&mut self, input: &Input, egui_ctx: &mut &Context, timer: &FrameTimer) {
         self.client.poll();
 
+        let egui_focused = egui_ctx.wants_keyboard_input();
+        let left = if egui_focused { false } else { input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft]) };
+        let up = if egui_focused { false } else { input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp]) };
+        let right = if egui_focused { false } else { input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight]) };
+        let down = if egui_focused { false } else { input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown]) };
+
         let mouse_pos = input.mouse_position();
-        let left = input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft]);
-        let up = input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp]);
-        let right = input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight]);
-        let down = input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown]);
         let mouse_tile_pos = input
             .mouse_released(MouseButton::Left)
             .then_some(mouse_pos)
@@ -127,12 +136,13 @@ impl Game {
         self.world.query(
             |_, _: &Player, pos: &mut WorldPos, target_pos: &TargetWorldPos, spr: &mut Sprite| {
                 if pos.vec != target_pos.vec {
-                    let dir = (target_pos.vec - pos.vec).normalize_or_zero();
-                    pos.vec += dir * 100.0 * timer.delta;
+                    pos.vec = pos.vec.lerp(target_pos.vec, 0.1);
 
-                    if dir.x.abs() > dir.y.abs() {
-                        spr.anim.flip_x(dir.x < 0.0);
+                    let delta = target_pos.vec - pos.vec;
+                    if delta.x.abs() > delta.y.abs() {
+                        spr.anim.flip_x(delta.x < 0.0);
                     }
+
                     spr.anim.update(timer.delta);
 
                     if pos.vec.distance(target_pos.vec) < 1.0 {
@@ -161,26 +171,77 @@ impl Game {
         }
     }
 
-    pub fn render(&self, gfx: &mut Graphics, timer: &FrameTimer) {
-        let screen_size = gfx.screen_size();
+    pub fn render(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
+        let screen = gfx.screen_size();
         gfx.clear(Color::BLUE);
 
         self.map.draw_tiles(gfx);
 
-        self.world
-            .query(|player, _: &Player, world_pos: &WorldPos, spr: &Sprite| {
-                let draw_pos = world_pos.vec + spr.anim.offset(spr.frame_size, spr.sprite_size);
-                gfx.rect()
-                    .at(draw_pos)
-                    .size(Vec2::splat(64.0))
-                    .texture(self.player_tex.unwrap())
-                    .uv(spr.anim.frame());
+        let mut latest_msgs: HashMap<Entity, &String> = HashMap::new();
+        for (sender_id, text) in self.chat_messages.iter().rev() {
+            if let Some(&entity) = self.lobby.get(sender_id) {
+                latest_msgs.entry(entity).or_insert(text);
+            }
+        }
 
-                if Some(player) == self.player {
-                    gfx.camera().center(world_pos.vec, screen_size);
-                }
-            });
+        let mut player_world_pos = Vec2::ZERO;
+
+        self.world.query(|player, _: &Player, world_pos: &WorldPos, spr: &Sprite| {
+            let draw_pos = world_pos.vec + spr.anim.offset(spr.frame_size, spr.sprite_size);
+            gfx.rect()
+                .at(draw_pos)
+                .texture(self.player_tex.unwrap())
+                .uv(spr.anim.frame());
+
+            if Some(player) == self.player {
+                player_world_pos = world_pos.vec;
+                gfx.camera().center(world_pos.vec, screen);
+            }
+        });
+
+        self.world.query(|player, _: &Player, world_pos: &WorldPos, _: &Sprite| {
+            if let Some(msg) = latest_msgs.get(&player) {
+                let screen_pos = world_pos.vec - player_world_pos + screen / 2.0;
+                gfx.text(msg)
+                    .at((screen_pos.x, screen_pos.y - 10.0))
+                    .color(Color::WHITE);
+            }
+        });
 
         gfx.text(&format!("FPS: {}", timer.fps)).at((10.0, 10.0));
+
+        let chat_width = screen.x / 2.0;
+        let chat_height = screen.y / 5.0;
+        let chat_x = 10.0;
+        let chat_y = screen.y - chat_height - 10.0;
+
+        Window::new("Chat")
+            .resizable(false)
+            .collapsible(false)
+            .fixed_pos([chat_x, chat_y])
+            .fixed_size([chat_width, chat_height])
+            .show(egui_ctx, |ui| {
+                ScrollArea::vertical()
+                    .max_height(chat_height - 50.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for (sender, text) in self.chat_messages.iter() {
+                            ui.label(format!("{}: {}", sender, text));
+                        }
+                    });
+
+                ui.separator();
+
+                let response = ui.text_edit_singleline(&mut self.chat_input);
+                if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                    let text = self.chat_input.trim().to_string();
+                    if !text.is_empty() {
+                        let msg = ClientMessage::ChatMessage { text };
+                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                        self.chat_input.clear();
+                    }
+                    response.request_focus();
+                }
+            });
     }
 }

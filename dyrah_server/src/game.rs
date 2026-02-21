@@ -40,6 +40,7 @@ impl Game {
     }
 
     pub fn handle_events(&mut self) {
+        self.server.poll();
         while let Some(event) = self.server.recv_event() {
             match event {
                 ServerEvent::ClientConnected(id) => {
@@ -55,7 +56,7 @@ impl Game {
                         };
 
                         self.server
-                            .send_reliable_to(&addr, &serialize(&msg).unwrap(), true);
+                            .send_reliable_to(&addr, &serialize(&msg).unwrap(), None);
                     }
 
                     let spawn_pos = self.map.get_spawn("player").unwrap();
@@ -79,43 +80,52 @@ impl Game {
                         position: self.map.tiled.tile_to_world(spawn_pos),
                     };
                     self.server
-                        .broadcast_reliable(&serialize(&msg).unwrap(), true);
+                        .broadcast_reliable(&serialize(&msg).unwrap(), None);
                 }
                 ServerEvent::ClientDisconnected(id) => {
                     println!("Client {} disconnected.", id);
 
                     self.lobby.remove(&id).map(|p| self.world.despawn(p));
-                    
+
                     let msg = ServerMessage::PlayerDespawned { id };
-                    self.server.broadcast_reliable(&serialize(&msg).unwrap(), true);
+                    self.server
+                        .broadcast_reliable(&serialize(&msg).unwrap(), None);
                 }
-                ServerEvent::MessageReceived(id, bytes) => {
-                    let ClientMessage::PlayerUpdate { input } = deserialize(&bytes).unwrap();
+                ServerEvent::MessageReceived(id, bytes) => match deserialize(&bytes).unwrap() {
+                    ClientMessage::ChatMessage { text } => {
+                        let msg = ServerMessage::ChatReceived {
+                            sender_id: id,
+                            text,
+                        };
+                        self.server
+                            .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                    }
+                    ClientMessage::PlayerUpdate { input } => {
+                        if let Some(&player) = self.lobby.get(&id) {
+                            let mut target_pos =
+                                self.world.get_mut::<TargetTilePos>(player).unwrap();
+                            let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
 
-                    if let Some(&player) = self.lobby.get(&id) {
-                        let mut target_pos = self.world.get_mut::<TargetTilePos>(player).unwrap();
-                        let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
+                            let next_pos = target_pos.vec + input.to_direction();
 
-                        let next_pos = target_pos.vec + input.to_direction();
+                            if self.map.is_walkable(next_pos, &self.collision_grid) {
+                                target_pos.vec = next_pos;
+                                tile_pos.vec = next_pos;
 
-                        if self.map.is_walkable(next_pos, &self.collision_grid) {
-                            target_pos.vec = next_pos;
-                            tile_pos.vec = next_pos;
-
-                            let msg = ServerMessage::PlayerMoved {
-                                id,
-                                position: self.map.tiled.tile_to_world(tile_pos.vec),
-                            };
-                            self.server.broadcast(&serialize(&msg).unwrap());
+                                let msg = ServerMessage::PlayerMoved {
+                                    id,
+                                    position: self.map.tiled.tile_to_world(tile_pos.vec),
+                                };
+                                self.server.broadcast(&serialize(&msg).unwrap());
+                            }
                         }
                     }
-                }
+                },
             }
         }
     }
 
     pub fn update(&mut self, _dt: f32) {
-        self.server.poll();
         self.collision_grid.update(&self.map, &self.world);
     }
 }

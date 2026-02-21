@@ -8,11 +8,13 @@ pub enum ServerMessage {
     PlayerSpawned { id: NetId, position: Vec2 },
     PlayerDespawned { id: NetId },
     PlayerMoved { id: NetId, position: Vec2 },
+    ChatReceived { sender_id: NetId, text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     PlayerUpdate { input: ClientInput },
+    ChatMessage { text: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

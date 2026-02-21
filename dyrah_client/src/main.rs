@@ -12,15 +12,19 @@ fn main() {
 
     App::new().title("Dyrah").vsync(false).run(
         move |FrameContext {
-                  gfx, input, timer, ..
+                  gfx,
+                  input,
+                  timer,
+                  egui_ctx,
+                  ..
               }| {
             if timer.frame == 0 {
                 game.load(gfx);
             }
 
             game.handle_events();
-            game.update(input, timer);
-            game.render(gfx, timer);
+            game.update(input, egui_ctx, timer);
+            game.render(gfx, egui_ctx, timer);
         },
     );
 }
