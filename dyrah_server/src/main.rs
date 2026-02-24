@@ -4,14 +4,15 @@ mod game;
 mod map;
 
 use std::{
-    thread,
+    env, thread,
     time::{Duration, Instant},
 };
 
 use crate::game::Game;
 
 fn main() {
-    let mut game = Game::new();
+    let db_path = env::var("DB_PATH").unwrap_or("dyrah.db".into());
+    let mut game = Game::new(db_path);
     let frame_time = Duration::from_millis(33); // ~30 FPS
     let mut last = Instant::now();
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 
 use bincode::{deserialize, serialize};
 use secs::{Entity, World};
@@ -30,11 +30,11 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new() -> Self {
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
         let map = Map::new("assets/map.json");
 
         Self {
-            db: Database::new(),
+            db: Database::new(path),
             server: Server::new(Transport::new("0.0.0.0:8080"), ServerConfig::default()),
             pending: HashMap::new(),
             lobby: HashMap::new(),
