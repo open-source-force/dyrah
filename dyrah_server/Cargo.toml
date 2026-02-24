@@ -5,13 +5,11 @@ edition = "2024"
 
 [dependencies]
 glam = { version = "0.30.4", features = ["serde"] }
-wrym = { git = "https://github.com/wick3dr0se/wrym", version = "0.1.0", default-features = false, features = [
-    "laminar",
-] }
+wrym = { git = "https://github.com/wick3dr0se/wrym", version = "0.1.0" }
 bincode = "1.3.3"
 serde = { version = "1.0.219", features = ["derive"] }
 
 dyrah_shared = { path = "../dyrah_shared" }
 secs = "0.1.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
-argon2 = "0.5.3"
+argon2 = { version = "0.5.3", features = ["std"] }

@@ -3,8 +3,8 @@ use std::{collections::HashMap, path::Path};
 use bincode::{deserialize, serialize};
 use secs::{Entity, World};
 use wrym::{
-    server::{Server, ServerConfig, ServerEvent},
-    transport::Transport,
+    Reliability,
+    server::{Server, ServerConfig, ServerEvent, Transport},
 };
 
 use dyrah_shared::{
@@ -63,8 +63,10 @@ impl Game {
                     }
 
                     let msg = ServerMessage::PlayerDespawned { id };
-                    self.server
-                        .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                    self.server.broadcast(
+                        &serialize(&msg).unwrap(),
+                        Reliability::ReliableOrdered { channel: 0 },
+                    );
                 }
                 ServerEvent::MessageReceived(id, bytes) => match deserialize(&bytes).unwrap() {
                     ClientMessage::Register { username, password } => {
@@ -80,10 +82,10 @@ impl Game {
                                     let msg = ServerMessage::AuthFailed {
                                         reason: "Username already taken".into(),
                                     };
-                                    self.server.send_reliable_to(
+                                    self.server.send_to(
                                         addr,
                                         &serialize(&msg).unwrap(),
-                                        None,
+                                        Reliability::ReliableOrdered { channel: 0 },
                                     );
                                 }
                             }
@@ -102,10 +104,10 @@ impl Game {
                                     let msg = ServerMessage::AuthFailed {
                                         reason: "Invalid username or password".into(),
                                     };
-                                    self.server.send_reliable_to(
+                                    self.server.send_to(
                                         addr,
                                         &serialize(&msg).unwrap(),
-                                        None,
+                                        Reliability::ReliableOrdered { channel: 0 },
                                     );
                                 }
                             }
@@ -118,7 +120,7 @@ impl Game {
                                 text,
                             };
                             self.server
-                                .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                                .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
                         }
                     }
                     ClientMessage::PlayerUpdate { input } => {
@@ -137,7 +139,8 @@ impl Game {
                                     id,
                                     position: self.map.tiled.tile_to_world(tile_pos.vec),
                                 };
-                                self.server.broadcast(&serialize(&msg).unwrap());
+                                self.server
+                                    .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
                             }
                         }
                     }
@@ -159,8 +162,11 @@ impl Game {
                 username: other_name.clone(),
                 position: self.map.tiled.tile_to_world(target_pos.vec),
             };
-            self.server
-                .send_reliable_to(addr, &serialize(&msg).unwrap(), None);
+            self.server.send_to(
+                addr,
+                &serialize(&msg).unwrap(),
+                Reliability::ReliableOrdered { channel: 0 },
+            );
         }
 
         let spawn_pos = self.map.get_spawn("player").unwrap();
@@ -177,7 +183,9 @@ impl Game {
             username,
             position: self.map.tiled.tile_to_world(spawn_pos),
         };
-        self.server
-            .broadcast_reliable(&serialize(&msg).unwrap(), None);
+        self.server.broadcast(
+            &serialize(&msg).unwrap(),
+            Reliability::ReliableOrdered { channel: 0 },
+        );
     }
 }

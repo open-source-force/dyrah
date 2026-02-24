@@ -10,8 +10,8 @@ use egor::{
 };
 use secs::{Entity, World};
 use wrym::{
-    client::{Client, ClientEvent},
-    transport::Transport,
+    Reliability,
+    client::{Client, ClientEvent, Transport},
 };
 
 use dyrah_shared::{
@@ -51,7 +51,7 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         Self {
-            client: Client::new(Transport::new("0.0.0.0:0"), "0.0.0.0:8080"),
+            client: Client::new(Transport::new("0.0.0.0:8080"), "0.0.0.0:0"),
             world: World::default(),
             map: Map::new("assets/map.json"),
             lobby: HashMap::new(),
@@ -226,7 +226,8 @@ impl Game {
                     mouse_tile_pos,
                 },
             };
-            self.client.send(&serialize(&msg).unwrap());
+            self.client
+                .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
         }
     }
 
@@ -265,14 +266,20 @@ impl Game {
                             username: self.auth_username.clone(),
                             password: self.auth_password.clone(),
                         };
-                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                        self.client.send(
+                            &serialize(&msg).unwrap(),
+                            Reliability::ReliableOrdered { channel: 0 },
+                        );
                     }
                     if ui.button("Register").clicked() {
                         let msg = ClientMessage::Register {
                             username: self.auth_username.clone(),
                             password: self.auth_password.clone(),
                         };
-                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                        self.client.send(
+                            &serialize(&msg).unwrap(),
+                            Reliability::ReliableOrdered { channel: 0 },
+                        );
                     }
                 });
             });
@@ -356,7 +363,8 @@ impl Game {
                     let text = self.chat_input.trim().to_string();
                     if !text.is_empty() {
                         let msg = ClientMessage::ChatMessage { text };
-                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                        self.client
+                            .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
                         self.chat_input.clear();
                     }
                     egui_ctx.memory_mut(|memory| memory.surrender_focus(response.id));

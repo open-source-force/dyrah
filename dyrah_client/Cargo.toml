@@ -5,9 +5,7 @@ edition = "2024"
 
 [dependencies]
 egor = { version = "0.9.0", features = ["ui"] }
-wrym = { git = "https://github.com/wick3dr0se/wrym", version = "0.1.0", default-features = false, features = [
-    "laminar",
-] }
+wrym = { git = "https://github.com/wick3dr0se/wrym", version = "0.1.0" }
 bincode = "1.3.3"
 serde = { version = "1.0.219", features = ["derive"] }
 
