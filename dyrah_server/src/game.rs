@@ -15,12 +15,15 @@ use dyrah_shared::{
 
 use crate::{
     components::{Collider, TargetTilePos, TilePos},
+    db::Database,
     map::{CollisionGrid, Map},
 };
 
 pub struct Game {
+    db: Database,
     server: Server<Transport>,
-    lobby: HashMap<NetId, Entity>,
+    pending: HashMap<NetId, String>,
+    lobby: HashMap<NetId, (Entity, String)>,
     world: World,
     collision_grid: CollisionGrid,
     map: Map,
@@ -31,7 +34,9 @@ impl Game {
         let map = Map::new("assets/map.json");
 
         Self {
-            server: Server::new(Transport::new("127.0.0.1:8080"), ServerConfig::default()),
+            db: Database::new(),
+            server: Server::new(Transport::new("0.0.0.0:8080"), ServerConfig::default()),
+            pending: HashMap::new(),
             lobby: HashMap::new(),
             world: World::default(),
             collision_grid: CollisionGrid::new(&map),
@@ -44,64 +49,80 @@ impl Game {
         while let Some(event) = self.server.recv_event() {
             match event {
                 ServerEvent::ClientConnected(id) => {
-                    let addr = self.server.client_addr(id).unwrap();
+                    let addr = self.server.client_addr(id).unwrap().clone();
                     println!("Client {} connected from {}", id, addr);
-
-                    // sync existing players on new clients
-                    for (&other_id, &player) in &self.lobby {
-                        let target_pos = self.world.get::<TargetTilePos>(player).unwrap();
-                        let msg = ServerMessage::PlayerSpawned {
-                            id: other_id,
-                            position: self.map.tiled.tile_to_world(target_pos.vec),
-                        };
-
-                        self.server
-                            .send_reliable_to(&addr, &serialize(&msg).unwrap(), None);
-                    }
-
-                    let spawn_pos = self.map.get_spawn("player").unwrap();
-                    let player = self.world.spawn((
-                        Player,
-                        TilePos { vec: spawn_pos },
-                        TargetTilePos { vec: spawn_pos },
-                        Collider,
-                    ));
-                    self.lobby.insert(id, player);
-
-                    println!(
-                        "Spawned player {} at tile: {:?}, world: {:?}",
-                        id,
-                        spawn_pos,
-                        self.map.tiled.tile_to_world(spawn_pos)
-                    );
-
-                    let msg = ServerMessage::PlayerSpawned {
-                        id,
-                        position: self.map.tiled.tile_to_world(spawn_pos),
-                    };
-                    self.server
-                        .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                    // park them in pending until they authenticate
+                    self.pending.insert(id, addr);
                 }
                 ServerEvent::ClientDisconnected(id) => {
                     println!("Client {} disconnected.", id);
 
-                    self.lobby.remove(&id).map(|p| self.world.despawn(p));
+                    self.pending.remove(&id);
+                    if let Some((player, _)) = self.lobby.remove(&id) {
+                        self.world.despawn(player);
+                    }
 
                     let msg = ServerMessage::PlayerDespawned { id };
                     self.server
                         .broadcast_reliable(&serialize(&msg).unwrap(), None);
                 }
                 ServerEvent::MessageReceived(id, bytes) => match deserialize(&bytes).unwrap() {
+                    ClientMessage::Register { username, password } => {
+                        match self.db.register(&username, &password) {
+                            Ok(true) => {
+                                println!("New player registered: {}", username);
+                                if let Some(addr) = self.pending.remove(&id) {
+                                    self.spawn_player(id, username, &addr);
+                                }
+                            }
+                            _ => {
+                                if let Some(addr) = self.pending.get(&id) {
+                                    let msg = ServerMessage::AuthFailed {
+                                        reason: "Username already taken".into(),
+                                    };
+                                    self.server.send_reliable_to(
+                                        addr,
+                                        &serialize(&msg).unwrap(),
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    ClientMessage::Login { username, password } => {
+                        match self.db.login(&username, &password) {
+                            Ok(true) => {
+                                println!("Player logged in: {}", username);
+                                if let Some(addr) = self.pending.remove(&id) {
+                                    self.spawn_player(id, username, &addr);
+                                }
+                            }
+                            _ => {
+                                if let Some(addr) = self.pending.get(&id) {
+                                    let msg = ServerMessage::AuthFailed {
+                                        reason: "Invalid username or password".into(),
+                                    };
+                                    self.server.send_reliable_to(
+                                        addr,
+                                        &serialize(&msg).unwrap(),
+                                        None,
+                                    );
+                                }
+                            }
+                        }
+                    }
                     ClientMessage::ChatMessage { text } => {
-                        let msg = ServerMessage::ChatReceived {
-                            sender_id: id,
-                            text,
-                        };
-                        self.server
-                            .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                        if self.lobby.contains_key(&id) {
+                            let msg = ServerMessage::ChatReceived {
+                                sender_id: id,
+                                text,
+                            };
+                            self.server
+                                .broadcast_reliable(&serialize(&msg).unwrap(), None);
+                        }
                     }
                     ClientMessage::PlayerUpdate { input } => {
-                        if let Some(&player) = self.lobby.get(&id) {
+                        if let Some(&(player, _)) = self.lobby.get(&id) {
                             let mut target_pos =
                                 self.world.get_mut::<TargetTilePos>(player).unwrap();
                             let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
@@ -127,5 +148,36 @@ impl Game {
 
     pub fn update(&mut self, _dt: f32) {
         self.collision_grid.update(&self.map, &self.world);
+    }
+
+    fn spawn_player(&mut self, id: NetId, username: String, addr: &String) {
+        // sync existing players to the new client
+        for (&other_id, &(player, ref other_name)) in &self.lobby {
+            let target_pos = self.world.get::<TargetTilePos>(player).unwrap();
+            let msg = ServerMessage::PlayerSpawned {
+                id: other_id,
+                username: other_name.clone(),
+                position: self.map.tiled.tile_to_world(target_pos.vec),
+            };
+            self.server
+                .send_reliable_to(addr, &serialize(&msg).unwrap(), None);
+        }
+
+        let spawn_pos = self.map.get_spawn("player").unwrap();
+        let player = self.world.spawn((
+            Player,
+            TilePos { vec: spawn_pos },
+            TargetTilePos { vec: spawn_pos },
+            Collider,
+        ));
+        self.lobby.insert(id, (player, username.clone()));
+
+        let msg = ServerMessage::PlayerSpawned {
+            id,
+            username,
+            position: self.map.tiled.tile_to_world(spawn_pos),
+        };
+        self.server
+            .broadcast_reliable(&serialize(&msg).unwrap(), None);
     }
 }

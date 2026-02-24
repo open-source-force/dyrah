@@ -26,24 +26,32 @@ use crate::{
     sprite::Animation,
 };
 
+enum AppState {
+    Auth,
+    InGame,
+}
+
 pub struct Game {
     client: Client<Transport>,
     world: World,
     map: Map,
-    lobby: HashMap<NetId, Entity>,
+    lobby: HashMap<NetId, (Entity, String)>,
     last_input_time: f32,
     player_tex: Option<usize>,
     player: Option<Entity>,
     player_id: Option<NetId>,
-    chat_messages: Vec<(NetId, String, f32)>,
+    chat_messages: Vec<(String, String, f32)>,
     chat_input: String,
-    chat_open: bool,
+    app_state: AppState,
+    auth_username: String,
+    auth_password: String,
+    auth_error: Option<String>,
 }
 
 impl Game {
     pub fn new() -> Self {
         Self {
-            client: Client::new(Transport::new("127.0.0.1:0"), "127.0.0.1:8080"),
+            client: Client::new(Transport::new("0.0.0.0:0"), "0.0.0.0:8080"),
             world: World::default(),
             map: Map::new("assets/map.json"),
             lobby: HashMap::new(),
@@ -53,7 +61,10 @@ impl Game {
             player_id: None,
             chat_messages: Vec::new(),
             chat_input: String::new(),
-            chat_open: false,
+            app_state: AppState::Auth,
+            auth_username: String::new(),
+            auth_password: String::new(),
+            auth_error: None,
         }
     }
 
@@ -63,6 +74,7 @@ impl Game {
     }
 
     pub fn handle_events(&mut self) {
+        self.client.poll();
         while let Some(event) = self.client.recv_event() {
             match event {
                 ClientEvent::Connected(id) => {
@@ -71,6 +83,8 @@ impl Game {
                 }
                 ClientEvent::Disconnected => {
                     println!("Lost connection to server");
+                    self.app_state = AppState::Auth;
+                    self.auth_error = Some("Lost connection to server".into());
                 }
                 ClientEvent::MessageReceived(bytes) => {
                     let msg = deserialize::<ServerMessage>(&bytes).unwrap();
@@ -82,8 +96,21 @@ impl Game {
 
     fn handle_server_messages(&mut self, msg: ServerMessage) {
         match msg {
-            ServerMessage::PlayerSpawned { id, position } => {
-                println!("Player {} spawned!", id);
+            ServerMessage::AuthSuccess { .. } => {
+                // server handles this implicitly via PlayerSpawned for our own id,
+                // but we transition state here if you add it explicitly
+                self.app_state = AppState::InGame;
+                self.auth_error = None;
+            }
+            ServerMessage::AuthFailed { reason } => {
+                self.auth_error = Some(reason);
+            }
+            ServerMessage::PlayerSpawned {
+                id,
+                username,
+                position,
+            } => {
+                println!("Player {} ({}) spawned!", id, username);
 
                 let player = self.world.spawn((
                     Player,
@@ -96,29 +123,40 @@ impl Game {
                     },
                 ));
 
-                self.lobby.insert(id, player);
+                self.lobby.insert(id, (player, username));
                 if Some(id) == self.player_id {
                     self.player = Some(player);
+                    self.app_state = AppState::InGame;
                 }
             }
             ServerMessage::PlayerDespawned { id } => {
                 println!("Player {} disappeared", id);
-                self.lobby.remove(&id).map(|p| self.world.despawn(p));
+                if let Some((player, _)) = self.lobby.remove(&id) {
+                    self.world.despawn(player);
+                }
             }
             ServerMessage::PlayerMoved { id, position } => {
-                if let Some(&player) = self.lobby.get(&id) {
-                    let mut target_pos = self.world.get_mut::<TargetWorldPos>(player).unwrap();
+                if let Some((player, _)) = self.lobby.get(&id) {
+                    let mut target_pos = self.world.get_mut::<TargetWorldPos>(*player).unwrap();
                     target_pos.vec = position;
                 }
             }
             ServerMessage::ChatReceived { sender_id, text } => {
-                self.chat_messages.push((sender_id, text, 0.0));
+                let username = self
+                    .lobby
+                    .get(&sender_id)
+                    .map(|(_, name)| name.clone())
+                    .unwrap_or_else(|| sender_id.to_string());
+                self.chat_messages.push((username, text, 0.0));
             }
         }
     }
 
     pub fn update(&mut self, input: &Input, egui_ctx: &mut &Context, timer: &FrameTimer) {
-        self.client.poll();
+        // dont process game input while on the auth screen
+        if matches!(self.app_state, AppState::Auth) {
+            return;
+        }
 
         let egui_focused = egui_ctx.wants_keyboard_input();
         let left = if egui_focused {
@@ -193,15 +231,67 @@ impl Game {
     }
 
     pub fn render(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
+        match self.app_state {
+            AppState::Auth => self.render_auth(gfx, egui_ctx),
+            AppState::InGame => self.render_game(gfx, egui_ctx, timer),
+        }
+    }
+
+    fn render_auth(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context) {
+        gfx.clear(Color::BLACK);
+
+        CentralPanel::default().show(egui_ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(100.0);
+                ui.heading("Dyrah");
+                ui.add_space(20.0);
+
+                ui.label("Username");
+                ui.text_edit_singleline(&mut self.auth_username);
+                ui.add_space(5.0);
+
+                ui.label("Password");
+                ui.add(TextEdit::singleline(&mut self.auth_password).password(true));
+                ui.add_space(10.0);
+
+                if let Some(err) = &self.auth_error {
+                    ui.colored_label(Color32::RED, err);
+                    ui.add_space(5.0);
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.button("Login").clicked() {
+                        let msg = ClientMessage::Login {
+                            username: self.auth_username.clone(),
+                            password: self.auth_password.clone(),
+                        };
+                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                    }
+                    if ui.button("Register").clicked() {
+                        let msg = ClientMessage::Register {
+                            username: self.auth_username.clone(),
+                            password: self.auth_password.clone(),
+                        };
+                        self.client.send_reliable(&serialize(&msg).unwrap(), None);
+                    }
+                });
+            });
+        });
+    }
+
+    fn render_game(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
         let screen = gfx.screen_size();
         gfx.clear(Color::BLUE);
 
         self.map.draw_tiles(gfx);
 
         let mut latest_msgs: HashMap<Entity, (String, f32)> = HashMap::new();
-        for (sender_id, text, age) in &self.chat_messages {
-            if let Some(&entity) = self.lobby.get(sender_id) {
-                latest_msgs.insert(entity, (text.clone(), *age));
+        for (username, text, age) in &self.chat_messages {
+            // find the entity whose username matches
+            if let Some((&_id, (entity, _))) =
+                self.lobby.iter().find(|(_, (_, name))| name == username)
+            {
+                latest_msgs.insert(*entity, (text.clone(), *age));
             }
         }
 
@@ -225,7 +315,7 @@ impl Game {
             .query(|player, _: &Player, world_pos: &WorldPos, _: &Sprite| {
                 if let Some((msg, age)) = latest_msgs.get(&player) {
                     let alpha = if *age > 8.0 {
-                        1.0 - (*age - 8.0) / 2.0 // fade over last 2 seconds
+                        1.0 - (*age - 8.0) / 2.0
                     } else {
                         1.0
                     };
@@ -254,8 +344,8 @@ impl Game {
                     .max_height(scroll_height)
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
-                        for (sender, text, _) in &self.chat_messages {
-                            ui.label(format!("{}: {}", sender, text));
+                        for (username, text, _) in &self.chat_messages {
+                            ui.label(format!("{}: {}", username, text));
                         }
                     });
 

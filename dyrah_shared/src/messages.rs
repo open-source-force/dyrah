@@ -5,14 +5,36 @@ use crate::NetId;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
-    PlayerSpawned { id: NetId, position: Vec2 },
-    PlayerDespawned { id: NetId },
-    PlayerMoved { id: NetId, position: Vec2 },
-    ChatReceived { sender_id: NetId, text: String },
+    AuthSuccess {
+        id: NetId,
+        username: String,
+        password: String,
+    },
+    AuthFailed {
+        reason: String,
+    },
+    PlayerSpawned {
+        id: NetId,
+        username: String,
+        position: Vec2,
+    },
+    PlayerDespawned {
+        id: NetId,
+    },
+    PlayerMoved {
+        id: NetId,
+        position: Vec2,
+    },
+    ChatReceived {
+        sender_id: NetId,
+        text: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
+    Login { username: String, password: String },
+    Register { username: String, password: String },
     PlayerUpdate { input: ClientInput },
     ChatMessage { text: String },
 }
