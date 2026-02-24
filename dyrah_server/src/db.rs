@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
     password_hash::{SaltString, rand_core::OsRng},
@@ -9,8 +11,8 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn new() -> Self {
-        let conn = Connection::open("dyrah.db").unwrap();
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        let conn = Connection::open(path).unwrap();
         conn.execute_batch(
             "
             CREATE TABLE IF NOT EXISTS players (
