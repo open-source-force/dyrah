@@ -57,6 +57,10 @@ impl TiledMap {
         from_str(&content).expect("Failed to parse JSON map")
     }
 
+    pub fn tile_size(&self) -> IVec2 {
+        IVec2::new(self.tilewidth as i32, self.tileheight as i32)
+    }
+
     pub fn get_layer(&self, layer_name: &str) -> Option<&TiledLayer> {
         self.layers.iter().find(|l| l.name == layer_name)
     }
@@ -72,9 +76,8 @@ impl TiledMap {
             None => return true,
         };
 
-        // shift Y by +1 tile to compensate for the rendering offset
         let tile_x = tile_pos.x as usize;
-        let tile_y = (tile_pos.y + 1) as usize;
+        let tile_y = tile_pos.y as usize;
         if tile_x >= layer.width.unwrap() as usize || tile_y >= layer.height.unwrap() as usize {
             return false; // out of bounds = blocked
         }
@@ -95,10 +98,9 @@ impl TiledMap {
     }
 
     pub fn world_to_tile(&self, world_pos: Vec2) -> IVec2 {
-        // flip Y because Tiled's origin is top-left, egor is bottom-left
         IVec2::new(
             (world_pos.x / self.tilewidth as f32).floor() as i32,
-            ((world_pos.y - self.tileheight as f32) / self.tileheight as f32).floor() as i32,
+            (world_pos.y / self.tileheight as f32).floor() as i32,
         )
     }
 

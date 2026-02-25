@@ -4,7 +4,7 @@ use bincode::{deserialize, serialize};
 use egor::{
     app::egui::*,
     input::{Input, KeyCode, MouseButton},
-    math::Vec2,
+    math::{IVec2, Vec2},
     render::{Color, Graphics},
     time::FrameTimer,
 };
@@ -46,6 +46,7 @@ pub struct Game {
     auth_username: String,
     auth_password: String,
     auth_error: Option<String>,
+    hovered_tile: Option<IVec2>,
 }
 
 impl Game {
@@ -65,6 +66,7 @@ impl Game {
             auth_username: String::new(),
             auth_password: String::new(),
             auth_error: None,
+            hovered_tile: None,
         }
     }
 
@@ -152,7 +154,19 @@ impl Game {
         }
     }
 
-    pub fn update(&mut self, input: &Input, egui_ctx: &mut &Context, timer: &FrameTimer) {
+    pub fn update(
+        &mut self,
+        gfx: &mut Graphics,
+        input: &Input,
+        egui_ctx: &mut &Context,
+        timer: &FrameTimer,
+    ) {
+        if let Some(player) = self.player {
+            if let Some(pos) = self.world.get::<WorldPos>(player) {
+                let screen = gfx.screen_size();
+                gfx.camera().center(pos.vec, screen);
+            }
+        }
         // dont process game input while on the auth screen
         if matches!(self.app_state, AppState::Auth) {
             return;
@@ -180,12 +194,13 @@ impl Game {
             input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown])
         };
 
-        let mouse_pos = input.mouse_position();
+        let mouse_world_pos = gfx.camera().screen_to_world(input.mouse_position().into());
         let mouse_tile_pos = input
             .mouse_released(MouseButton::Left)
-            .then_some(mouse_pos)
+            .then_some(mouse_world_pos)
             .map(|mp| self.map.tiled.world_to_tile(mp.into()));
         let moving = left || up || right || down || mouse_tile_pos.is_some();
+        self.hovered_tile = Some(self.map.tiled.world_to_tile(mouse_world_pos));
 
         self.chat_messages.retain_mut(|(_, _, age)| {
             *age += timer.delta;
@@ -306,7 +321,10 @@ impl Game {
 
         self.world
             .query(|player, _: &Player, world_pos: &WorldPos, spr: &Sprite| {
-                let draw_pos = world_pos.vec + spr.anim.offset(spr.frame_size, spr.sprite_size);
+                let draw_pos = world_pos.vec
+                    + spr
+                        .anim
+                        .offset(spr.frame_size, spr.sprite_size, Vec2::splat(32.0));
                 gfx.rect()
                     .at(draw_pos)
                     .texture(self.player_tex.unwrap())
@@ -314,7 +332,6 @@ impl Game {
 
                 if Some(player) == self.player {
                     player_world_pos = world_pos.vec;
-                    gfx.camera().center(world_pos.vec, screen);
                 }
             });
 
@@ -335,6 +352,42 @@ impl Game {
 
         gfx.text(&format!("FPS: {}", timer.fps)).at((10.0, 10.0));
 
+        if let Some(player) = self.player {
+            if let Some(pos) = self.world.get::<WorldPos>(player) {
+                if let Some(target) = self.world.get::<TargetWorldPos>(player) {
+                    let tile = self.map.tiled.world_to_tile(pos.vec);
+                    let target_tile = self.map.tiled.world_to_tile(target.vec);
+                    let hover = self.hovered_tile.unwrap_or(IVec2::ZERO);
+
+                    gfx.text(&format!("World: ({:.0}, {:.0})", pos.vec.x, pos.vec.y))
+                        .at((10.0, 30.0));
+                    gfx.text(&format!("Tile: ({}, {})", tile.x, tile.y))
+                        .at((10.0, 50.0));
+                    gfx.text(&format!(
+                        "Target tile: ({}, {})",
+                        target_tile.x, target_tile.y
+                    ))
+                    .at((10.0, 70.0));
+                    gfx.text(&format!("Hovered tile: ({}, {})", hover.x, hover.y))
+                        .at((10.0, 90.0));
+                }
+            }
+        }
+
+        if let Some(tile) = self.hovered_tile {
+            let p = self.map.tiled.tile_to_world(tile);
+            let s = 32.0;
+            gfx.polyline()
+                .points(&[
+                    p,
+                    p + Vec2::new(s, 0.0),
+                    p + Vec2::new(s, s),
+                    p + Vec2::new(0.0, s),
+                ])
+                .closed(true)
+                .thickness(1.5)
+                .color(Color::new([1.0, 0.5, 0.0, 1.0]));
+        }
         let chat_width = screen.x / 2.0;
         let chat_height = screen.y / 5.0;
         let chat_x = 10.0;

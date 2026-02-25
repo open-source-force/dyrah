@@ -72,17 +72,14 @@ impl Animation {
         self.flipped_y = flip;
     }
 
-    pub fn offset(&self, frame_size: Vec2, sprite_size: Vec2) -> Vec2 {
-        let mut offset = Vec2::ZERO;
-
+    pub fn offset(&self, frame_size: Vec2, sprite_size: Vec2, tile_size: Vec2) -> Vec2 {
+        let mut offset = Vec2::new(0.0, -(sprite_size.y - tile_size.y));
         if self.flipped_x {
-            offset.x = -(frame_size.x - sprite_size.x);
+            offset.x -= frame_size.x - sprite_size.x;
         }
-
         if self.flipped_y {
-            offset.y = -(frame_size.y - sprite_size.y);
+            offset.y -= frame_size.y - sprite_size.y;
         }
-
         offset
     }
 }

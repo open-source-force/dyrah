@@ -23,7 +23,7 @@ fn main() {
             }
 
             game.handle_events();
-            game.update(input, egui_ctx, timer);
+            game.update(gfx, input, egui_ctx, timer);
             game.render(gfx, egui_ctx, timer);
         },
     );
