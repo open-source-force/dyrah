@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::Path, time::Duration};
 
 use bincode::{deserialize, serialize};
 use secs::{Entity, World};
@@ -35,7 +35,12 @@ impl Game {
 
         Self {
             db: Database::new(path),
-            server: Server::new(Transport::new("0.0.0.0:8080"), ServerConfig::default()),
+            server: Server::new(
+                Transport::new("0.0.0.0:8080"),
+                ServerConfig {
+                    client_timeout: Duration::from_mins(10),
+                },
+            ),
             pending: HashMap::new(),
             lobby: HashMap::new(),
             world: World::default(),
