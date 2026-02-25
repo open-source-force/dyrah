@@ -198,7 +198,7 @@ impl Game {
                     pos.vec = pos.vec.lerp(target_pos.vec, 0.1);
 
                     let delta = target_pos.vec - pos.vec;
-                    if delta.x.abs() > delta.y.abs() {
+                    if delta.x != 0.0 {
                         spr.anim.flip_x(delta.x < 0.0);
                     }
 
