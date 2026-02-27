@@ -1,8 +1,12 @@
-name: Deploy to Railway
+name: Deploy
 
+# on:
+  # push:
+    # branches: [main]
 on:
-  push:
-    branches: [cyy/deploy]
+  pull_request:
+    branches:
+      - main
 
 jobs:
   deploy:
