@@ -24,6 +24,7 @@ pub enum ServerMessage {
     PlayerMoved {
         id: NetId,
         position: Vec2,
+        path: Option<Vec<Vec2>>,
     },
     ChatReceived {
         sender_id: NetId,

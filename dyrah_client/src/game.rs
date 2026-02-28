@@ -117,7 +117,10 @@ impl Game {
                 let player = self.world.spawn((
                     Player,
                     WorldPos { vec: position },
-                    TargetWorldPos { vec: position },
+                    TargetWorldPos {
+                        vec: position,
+                        path: None,
+                    },
                     Sprite {
                         anim: Animation::new(1, 6, 6, 0.2),
                         frame_size: Vec2::splat(64.0),
@@ -137,10 +140,13 @@ impl Game {
                     self.world.despawn(player);
                 }
             }
-            ServerMessage::PlayerMoved { id, position } => {
+            ServerMessage::PlayerMoved { id, position, path } => {
                 if let Some((player, _)) = self.lobby.get(&id) {
                     let mut target_pos = self.world.get_mut::<TargetWorldPos>(*player).unwrap();
                     target_pos.vec = position;
+                    if path.is_some() {
+                        target_pos.path = path;
+                    }
                 }
             }
             ServerMessage::ChatReceived { sender_id, text } => {
@@ -208,7 +214,11 @@ impl Game {
         });
 
         self.world.query(
-            |_, _: &Player, pos: &mut WorldPos, target_pos: &TargetWorldPos, spr: &mut Sprite| {
+            |_,
+             _: &Player,
+             pos: &mut WorldPos,
+             target_pos: &mut TargetWorldPos,
+             spr: &mut Sprite| {
                 if pos.vec != target_pos.vec {
                     pos.vec = pos.vec.lerp(target_pos.vec, 0.1);
 
@@ -224,12 +234,13 @@ impl Game {
                     }
                 } else {
                     spr.anim.set_frame(0);
+                    target_pos.path = None;
                 }
             },
         );
 
         self.last_input_time += timer.delta;
-        if self.last_input_time >= 0.2 && moving {
+        if self.last_input_time >= 0.3 && moving {
             self.last_input_time = 0.0;
 
             let msg = ClientMessage::PlayerUpdate {
@@ -306,6 +317,46 @@ impl Game {
         gfx.clear(Color::BLUE);
 
         self.map.draw_tiles(gfx);
+
+        if let Some(player) = self.player {
+            if let Some(target) = self.world.get::<TargetWorldPos>(player) {
+                if let Some(path) = &target.path {
+                    let tile_size = 32.0;
+                    let half = tile_size / 2.0;
+
+                    if path.len() >= 2 {
+                        let centers: Vec<Vec2> =
+                            path.iter().map(|&p| p + Vec2::splat(half)).collect();
+                        gfx.polyline()
+                            .points(&centers)
+                            .thickness(1.0)
+                            .color(Color::new([0.0, 0.0, 0.0, 1.0]));
+                    }
+
+                    // draw tile outlines
+                    for &point in path {
+                        let s = tile_size;
+                        gfx.polyline()
+                            .points(&[
+                                point,
+                                point + Vec2::new(s, 0.0),
+                                point + Vec2::new(s, s),
+                                point + Vec2::new(0.0, s),
+                            ])
+                            .closed(true)
+                            .thickness(1.5)
+                            .color(Color::new([0.5, 0.0, 1.0, 0.8]));
+                    }
+                    for &point in path {
+                        gfx.polygon()
+                            .at(point + Vec2::splat(half))
+                            .radius(2.0)
+                            .segments(8)
+                            .color(Color::new([0.5, 0.0, 1.0, 1.0]));
+                    }
+                }
+            }
+        }
 
         let mut latest_msgs: HashMap<Entity, (String, f32)> = HashMap::new();
         for (username, text, age) in &self.chat_messages {

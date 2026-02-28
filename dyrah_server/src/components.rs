@@ -9,6 +9,8 @@ pub struct TilePos {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct TargetTilePos {
     pub vec: IVec2,
+    pub path: Option<Vec<IVec2>>,
+    pub delay: f32,
 }
 
 pub struct Collider;

@@ -11,6 +11,7 @@ pub struct WorldPos {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct TargetWorldPos {
     pub vec: Vec2,
+    pub path: Option<Vec<Vec2>>,
 }
 
 #[derive(Debug)]

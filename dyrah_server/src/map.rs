@@ -1,8 +1,8 @@
-use dyrah_shared::map::TiledMap;
-use secs::World;
-
 use crate::components::{Collider, TilePos};
+use dyrah_shared::map::TiledMap;
 use glam::{IVec2, Vec2};
+use pathfinding::prelude::astar;
+use secs::World;
 
 pub struct CollisionGrid {
     width: usize,
@@ -23,7 +23,6 @@ impl CollisionGrid {
 
     pub fn update(&mut self, map: &Map, world: &World) {
         self.grid.fill(false);
-
         for y in 0..self.height {
             for x in 0..self.width {
                 let tile_pos = IVec2::new(x as i32, y as i32);
@@ -32,11 +31,9 @@ impl CollisionGrid {
                 }
             }
         }
-
         world.query(|_, _: &Collider, tile_pos: &TilePos| {
             let x = tile_pos.vec.x as usize;
             let y = tile_pos.vec.y as usize;
-
             if x < self.width && y < self.height {
                 self.grid[y * self.width + x] = true;
             }
@@ -72,5 +69,35 @@ impl Map {
 
     pub fn is_walkable(&self, tile_pos: IVec2, grid: &CollisionGrid) -> bool {
         grid.is_walkable(tile_pos)
+    }
+
+    fn manhattan_distance(&self, a: IVec2, b: IVec2) -> u32 {
+        ((a.x - b.x).abs() + (a.y - b.y).abs()) as u32
+    }
+
+    fn get_walkable_successors(&self, tile_pos: IVec2, grid: &CollisionGrid) -> Vec<(IVec2, u32)> {
+        let mut successors = Vec::new();
+        for (dx, dy) in &[(0, 1), (1, 0), (0, -1), (-1, 0)] {
+            let neighbor = IVec2::new(tile_pos.x + dx, tile_pos.y + dy);
+            if neighbor.x >= 0
+                && neighbor.y >= 0
+                && neighbor.x < self.tiled.width as i32
+                && neighbor.y < self.tiled.height as i32
+                && grid.is_walkable(neighbor)
+            {
+                successors.push((neighbor, 1));
+            }
+        }
+        successors
+    }
+
+    pub fn find_path(&self, start: IVec2, end: IVec2, grid: &CollisionGrid) -> Option<Vec<IVec2>> {
+        let result = astar(
+            &start,
+            |&pos| self.get_walkable_successors(pos, grid),
+            |&pos| self.manhattan_distance(pos, end),
+            |&pos| pos == end,
+        );
+        result.map(|(path, _)| path.into_iter().skip(1).collect())
     }
 }

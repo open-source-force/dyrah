@@ -1,6 +1,7 @@
 use std::{collections::HashMap, path::Path, time::Duration};
 
 use bincode::{deserialize, serialize};
+use glam::IVec2;
 use secs::{Entity, World};
 use wrym::{
     Reliability,
@@ -134,18 +135,53 @@ impl Game {
                                 self.world.get_mut::<TargetTilePos>(player).unwrap();
                             let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
 
-                            let next_pos = target_pos.vec + input.to_direction();
+                            if let Some(mouse_tile_pos) = input.mouse_tile_pos {
+                                if let Some(path) = self.map.find_path(
+                                    tile_pos.vec,
+                                    mouse_tile_pos,
+                                    &self.collision_grid,
+                                ) {
+                                    let world_path: Vec<_> = path
+                                        .iter()
+                                        .map(|&t| self.map.tiled.tile_to_world(t))
+                                        .collect();
 
-                            if self.map.is_walkable(next_pos, &self.collision_grid) {
-                                target_pos.vec = next_pos;
-                                tile_pos.vec = next_pos;
+                                    target_pos.path = Some(path);
 
-                                let msg = ServerMessage::PlayerMoved {
-                                    id,
-                                    position: self.map.tiled.tile_to_world(tile_pos.vec),
-                                };
-                                self.server
-                                    .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
+                                    let msg = ServerMessage::PlayerMoved {
+                                        id,
+                                        position: self.map.tiled.tile_to_world(tile_pos.vec),
+                                        path: Some(world_path),
+                                    };
+                                    self.server.broadcast(
+                                        &serialize(&msg).unwrap(),
+                                        Reliability::Unreliable,
+                                    );
+                                }
+                            } else {
+                                let dir = input.to_direction();
+                                if dir != IVec2::ZERO {
+                                    let next_pos = tile_pos.vec + dir;
+                                    if self.map.is_walkable(next_pos, &self.collision_grid) {
+                                        target_pos.vec = next_pos;
+                                        target_pos.path = None;
+                                        tile_pos.vec = next_pos;
+
+                                        // diagonal costs 1.5x more than cardinal
+                                        target_pos.delay =
+                                            if dir.x != 0 && dir.y != 0 { 0.45 } else { 0.3 };
+
+                                        let msg = ServerMessage::PlayerMoved {
+                                            id,
+                                            position: self.map.tiled.tile_to_world(tile_pos.vec),
+                                            path: None,
+                                        };
+                                        self.server.broadcast(
+                                            &serialize(&msg).unwrap(),
+                                            Reliability::Unreliable,
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -154,8 +190,44 @@ impl Game {
         }
     }
 
-    pub fn update(&mut self, _dt: f32) {
+    pub fn update(&mut self, dt: f32) {
         self.collision_grid.update(&self.map, &self.world);
+
+        let moving: Vec<(NetId, Entity)> = self
+            .lobby
+            .iter()
+            .map(|(&id, &(entity, _))| (id, entity))
+            .collect();
+
+        for (id, player) in moving {
+            let mut target_pos = self.world.get_mut::<TargetTilePos>(player).unwrap();
+            let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
+
+            target_pos.delay -= dt;
+
+            if tile_pos.vec == target_pos.vec && target_pos.delay <= 0.0 {
+                if let Some(path) = target_pos.path.as_mut() {
+                    if let Some(next) = path.first().copied() {
+                        if self.map.is_walkable(next, &self.collision_grid) {
+                            path.remove(0);
+                            target_pos.vec = next;
+                            tile_pos.vec = next;
+                            target_pos.delay = 0.3; // matches client rate
+
+                            let msg = ServerMessage::PlayerMoved {
+                                id,
+                                position: self.map.tiled.tile_to_world(tile_pos.vec),
+                                path: None,
+                            };
+                            self.server
+                                .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
+                        } else {
+                            target_pos.path = None;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn spawn_player(&mut self, id: NetId, username: String, addr: &String) {
@@ -178,7 +250,11 @@ impl Game {
         let player = self.world.spawn((
             Player,
             TilePos { vec: spawn_pos },
-            TargetTilePos { vec: spawn_pos },
+            TargetTilePos {
+                vec: spawn_pos,
+                path: None,
+                delay: 0.0,
+            },
             Collider,
         ));
         self.lobby.insert(id, (player, username.clone()));

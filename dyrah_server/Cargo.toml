@@ -13,3 +13,4 @@ dyrah_shared = { path = "../dyrah_shared" }
 secs = "0.1.0"
 rusqlite = { version = "0.38.0", features = ["bundled"] }
 argon2 = { version = "0.5.3", features = ["std"] }
+pathfinding = "4.14.0"
