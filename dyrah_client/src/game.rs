@@ -47,12 +47,17 @@ pub struct Game {
     auth_password: String,
     auth_error: Option<String>,
     hovered_tile: Option<IVec2>,
+    // time since each direction key was last held (rises when released)
+    dir_age: [f32; 4], // left, up, right, down
+    // when starting from a stop, wait this long before sending to allow diagonal input
+    move_start_grace: f32,
+    was_moving: bool,
 }
 
 impl Game {
     pub fn new() -> Self {
         Self {
-            client: Client::new(Transport::new("0.0.0.0:8080"), "0.0.0.0:0"),
+            client: Client::new(Transport::new("127.0.0.1:8080"), "0.0.0.0:0"),
             world: World::default(),
             map: Map::new("assets/map.json"),
             lobby: HashMap::new(),
@@ -67,6 +72,9 @@ impl Game {
             auth_password: String::new(),
             auth_error: None,
             hovered_tile: None,
+            dir_age: [f32::MAX; 4],
+            move_start_grace: 0.0,
+            was_moving: false,
         }
     }
 
@@ -179,26 +187,34 @@ impl Game {
         }
 
         let egui_focused = egui_ctx.wants_keyboard_input();
-        let left = if egui_focused {
-            false
+        let raw_dirs = if egui_focused {
+            [false; 4]
         } else {
-            input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft])
+            [
+                input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft]),
+                input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp]),
+                input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight]),
+                input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown]),
+            ]
         };
-        let up = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp])
-        };
-        let right = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight])
-        };
-        let down = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown])
-        };
+
+        // ~3 frames at 60fps
+        let diagonal_buffer = 3.0 / 60.0;
+        for i in 0..4 {
+            if raw_dirs[i] {
+                self.dir_age[i] = 0.0;
+            } else {
+                self.dir_age[i] += timer.delta;
+            }
+        }
+
+        let buffered = [
+            self.dir_age[0] < diagonal_buffer,
+            self.dir_age[1] < diagonal_buffer,
+            self.dir_age[2] < diagonal_buffer,
+            self.dir_age[3] < diagonal_buffer,
+        ];
+        let [left, up, right, down] = buffered;
 
         let mouse_world_pos = gfx.camera().screen_to_world(input.mouse_position().into());
         let mouse_tile_pos = input
@@ -213,6 +229,10 @@ impl Game {
             *age < 10.0
         });
 
+        // 3 tiles/sec × 32 px/tile = 96 px/sec
+        let move_speed = 3.0 * dyrah_shared::TILE_SIZE;
+        let dt = timer.delta;
+
         self.world.query(
             |_,
              _: &Player,
@@ -220,18 +240,21 @@ impl Game {
              target_pos: &mut TargetWorldPos,
              spr: &mut Sprite| {
                 if pos.vec != target_pos.vec {
-                    pos.vec = pos.vec.lerp(target_pos.vec, 0.1);
+                    let diff = target_pos.vec - pos.vec;
+                    let dist = diff.length();
+                    let step = move_speed * dt;
 
-                    let delta = target_pos.vec - pos.vec;
-                    if delta.x != 0.0 {
-                        spr.anim.flip_x(delta.x < 0.0);
-                    }
-
-                    spr.anim.update(timer.delta);
-
-                    if pos.vec.distance(target_pos.vec) < 1.0 {
+                    if step >= dist {
                         pos.vec = target_pos.vec;
+                    } else {
+                        pos.vec += diff * (step / dist);
                     }
+
+                    if diff.x != 0.0 {
+                        spr.anim.flip_x(diff.x < 0.0);
+                    }
+
+                    spr.anim.update(dt);
                 } else {
                     spr.anim.set_frame(0);
                     target_pos.path = None;
@@ -240,20 +263,51 @@ impl Game {
         );
 
         self.last_input_time += timer.delta;
-        if self.last_input_time >= 0.3 && moving {
+
+        // mouse clicks send immediately — no grace delay or rate limiting
+        if mouse_tile_pos.is_some() {
             self.last_input_time = 0.0;
 
             let msg = ClientMessage::PlayerUpdate {
                 input: ClientInput {
-                    left,
-                    up,
-                    right,
-                    down,
+                    left: false,
+                    up: false,
+                    right: false,
+                    down: false,
                     mouse_tile_pos,
                 },
             };
             self.client
                 .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+        } else {
+            let keyboard_moving = left || up || right || down;
+
+            // when keyboard movement starts from a stop, wait the buffer window
+            // so the player can add a second key for diagonal
+            if keyboard_moving && !self.was_moving {
+                self.move_start_grace = diagonal_buffer;
+            }
+            self.was_moving = keyboard_moving;
+
+            if self.move_start_grace > 0.0 {
+                self.move_start_grace -= timer.delta;
+            }
+
+            if self.last_input_time >= 0.3 && keyboard_moving && self.move_start_grace <= 0.0 {
+                self.last_input_time = 0.0;
+
+                let msg = ClientMessage::PlayerUpdate {
+                    input: ClientInput {
+                        left,
+                        up,
+                        right,
+                        down,
+                        mouse_tile_pos: None,
+                    },
+                };
+                self.client
+                    .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+            }
         }
     }
 

@@ -162,7 +162,22 @@ impl Game {
                                 let dir = input.to_direction();
                                 if dir != IVec2::ZERO {
                                     let next_pos = tile_pos.vec + dir;
-                                    if self.map.is_walkable(next_pos, &self.collision_grid) {
+                                    let walkable = if dir.x != 0 && dir.y != 0 {
+                                        // diagonal: destination + both adjacent cardinals must be clear
+                                        self.map.is_walkable(next_pos, &self.collision_grid)
+                                            && self.map.is_walkable(
+                                                tile_pos.vec + IVec2::new(dir.x, 0),
+                                                &self.collision_grid,
+                                            )
+                                            && self.map.is_walkable(
+                                                tile_pos.vec + IVec2::new(0, dir.y),
+                                                &self.collision_grid,
+                                            )
+                                    } else {
+                                        self.map.is_walkable(next_pos, &self.collision_grid)
+                                    };
+
+                                    if walkable {
                                         target_pos.vec = next_pos;
                                         target_pos.path = None;
                                         tile_pos.vec = next_pos;
