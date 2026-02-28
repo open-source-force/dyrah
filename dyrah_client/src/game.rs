@@ -47,6 +47,11 @@ pub struct Game {
     auth_password: String,
     auth_error: Option<String>,
     hovered_tile: Option<IVec2>,
+    // time since each direction key was last held (rises when released)
+    dir_age: [f32; 4], // left, up, right, down
+    // when starting from a stop, wait this long before sending to allow diagonal input
+    move_start_grace: f32,
+    was_moving: bool,
 }
 
 impl Game {
@@ -67,6 +72,9 @@ impl Game {
             auth_password: String::new(),
             auth_error: None,
             hovered_tile: None,
+            dir_age: [f32::MAX; 4],
+            move_start_grace: 0.0,
+            was_moving: false,
         }
     }
 
@@ -179,26 +187,34 @@ impl Game {
         }
 
         let egui_focused = egui_ctx.wants_keyboard_input();
-        let left = if egui_focused {
-            false
+        let raw_dirs = if egui_focused {
+            [false; 4]
         } else {
-            input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft])
+            [
+                input.keys_held(&[KeyCode::KeyA, KeyCode::ArrowLeft]),
+                input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp]),
+                input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight]),
+                input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown]),
+            ]
         };
-        let up = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyW, KeyCode::ArrowUp])
-        };
-        let right = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyD, KeyCode::ArrowRight])
-        };
-        let down = if egui_focused {
-            false
-        } else {
-            input.keys_held(&[KeyCode::KeyS, KeyCode::ArrowDown])
-        };
+
+        // ~3 frames at 60fps
+        let diagonal_buffer = 3.0 / 60.0;
+        for i in 0..4 {
+            if raw_dirs[i] {
+                self.dir_age[i] = 0.0;
+            } else {
+                self.dir_age[i] += timer.delta;
+            }
+        }
+
+        let buffered = [
+            self.dir_age[0] < diagonal_buffer,
+            self.dir_age[1] < diagonal_buffer,
+            self.dir_age[2] < diagonal_buffer,
+            self.dir_age[3] < diagonal_buffer,
+        ];
+        let [left, up, right, down] = buffered;
 
         let mouse_world_pos = gfx.camera().screen_to_world(input.mouse_position().into());
         let mouse_tile_pos = input
@@ -247,7 +263,19 @@ impl Game {
         );
 
         self.last_input_time += timer.delta;
-        if self.last_input_time >= 0.3 && moving {
+
+        // when movement starts from a stop, wait the buffer window before sending
+        // so the player can add a second key for diagonal
+        if moving && !self.was_moving {
+            self.move_start_grace = diagonal_buffer;
+        }
+        self.was_moving = moving;
+
+        if self.move_start_grace > 0.0 {
+            self.move_start_grace -= timer.delta;
+        }
+
+        if self.last_input_time >= 0.3 && moving && self.move_start_grace <= 0.0 {
             self.last_input_time = 0.0;
 
             let msg = ClientMessage::PlayerUpdate {
