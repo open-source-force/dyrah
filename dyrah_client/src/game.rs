@@ -264,31 +264,50 @@ impl Game {
 
         self.last_input_time += timer.delta;
 
-        // when movement starts from a stop, wait the buffer window before sending
-        // so the player can add a second key for diagonal
-        if moving && !self.was_moving {
-            self.move_start_grace = diagonal_buffer;
-        }
-        self.was_moving = moving;
-
-        if self.move_start_grace > 0.0 {
-            self.move_start_grace -= timer.delta;
-        }
-
-        if self.last_input_time >= 0.3 && moving && self.move_start_grace <= 0.0 {
+        // mouse clicks send immediately — no grace delay or rate limiting
+        if mouse_tile_pos.is_some() {
             self.last_input_time = 0.0;
 
             let msg = ClientMessage::PlayerUpdate {
                 input: ClientInput {
-                    left,
-                    up,
-                    right,
-                    down,
+                    left: false,
+                    up: false,
+                    right: false,
+                    down: false,
                     mouse_tile_pos,
                 },
             };
             self.client
                 .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+        } else {
+            let keyboard_moving = left || up || right || down;
+
+            // when keyboard movement starts from a stop, wait the buffer window
+            // so the player can add a second key for diagonal
+            if keyboard_moving && !self.was_moving {
+                self.move_start_grace = diagonal_buffer;
+            }
+            self.was_moving = keyboard_moving;
+
+            if self.move_start_grace > 0.0 {
+                self.move_start_grace -= timer.delta;
+            }
+
+            if self.last_input_time >= 0.3 && keyboard_moving && self.move_start_grace <= 0.0 {
+                self.last_input_time = 0.0;
+
+                let msg = ClientMessage::PlayerUpdate {
+                    input: ClientInput {
+                        left,
+                        up,
+                        right,
+                        down,
+                        mouse_tile_pos: None,
+                    },
+                };
+                self.client
+                    .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+            }
         }
     }
 
