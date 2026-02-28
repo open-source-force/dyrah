@@ -2,7 +2,7 @@ use egor::math::Vec2;
 
 #[derive(Debug)]
 struct Frame {
-    uv_coords: [[f32; 2]; 4],
+    uv: [f32; 4],
     duration: f32,
 }
 
@@ -22,7 +22,7 @@ impl Animation {
         for i in 0..total {
             let (x, y) = ((i % cols) as f32 * fw, (i / cols) as f32 * fh);
             frames.push(Frame {
-                uv_coords: [[x, y], [x + fw, y], [x + fw, y + fh], [x, y + fh]],
+                uv: [x, y, x + fw, y + fh],
                 duration: dur,
             });
         }
@@ -47,22 +47,18 @@ impl Animation {
         }
     }
 
-    pub fn frame(&self) -> [[f32; 2]; 4] {
-        let mut uv = self.frames[self.current].uv_coords;
-
+    pub fn frame(&self) -> [f32; 4] {
+        let mut uv = self.frames[self.current].uv;
         if self.flipped_x {
-            uv.swap(0, 1); // TL <-> TR
-            uv.swap(3, 2); // BL <-> BR
+            uv.swap(0, 2); // u0 <-> u1
         }
         if self.flipped_y {
-            uv.swap(0, 3); // TL <-> BL
-            uv.swap(1, 2); // TR <-> BR
+            uv.swap(1, 3); // v0 <-> v1
         }
-
         uv
     }
-    pub fn set_frame(&self, f: usize) -> [[f32; 2]; 4] {
-        self.frames[f].uv_coords
+    pub fn set_frame(&self, f: usize) -> [f32; 4] {
+        self.frames[f].uv
     }
 
     pub fn flip_x(&mut self, flip: bool) {

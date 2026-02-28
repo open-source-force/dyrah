@@ -130,7 +130,7 @@
          "name":"colliders",
          "opacity":1,
          "type":"tilelayer",
-         "visible":true,
+         "visible":false,
          "width":100,
          "x":0,
          "y":0
@@ -571,7 +571,7 @@
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
          "height":100,
          "id":21,
-         "name":"floors 3",
+         "name":"floor 3",
          "opacity":1,
          "type":"tilelayer",
          "visible":false,
@@ -685,7 +685,7 @@
          "name":"walls 3",
          "opacity":1,
          "type":"tilelayer",
-         "visible":false,
+         "visible":true,
          "width":100,
          "x":0,
          "y":0
@@ -700,7 +700,7 @@
         {
          "columns":16,
          "firstgid":1,
-         "image":"otsp_tiles_01.png",
+         "image":"..\/..\/..\/..\/dyrah\/assets\/otsp_tiles_01.png",
          "imageheight":2016,
          "imagewidth":512,
          "margin":0,
@@ -713,7 +713,7 @@
         {
          "columns":8,
          "firstgid":1009,
-         "image":"otsp_walls_01.png",
+         "image":"..\/..\/..\/..\/dyrah\/assets\/otsp_walls_01.png",
          "imageheight":2048,
          "imagewidth":512,
          "margin":0,
@@ -731,7 +731,7 @@
         {
          "columns":1,
          "firstgid":1265,
-         "image":"collider.png",
+         "image":"..\/..\/..\/..\/dyrah\/assets\/collider.png",
          "imageheight":32,
          "imagewidth":32,
          "margin":0,

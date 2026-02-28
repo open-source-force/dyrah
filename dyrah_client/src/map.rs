@@ -91,7 +91,7 @@ impl Map {
                             .at(Vec2::new(draw_x, draw_y))
                             .size(Vec2::new(tileset_tile_w as f32, tileset_tile_h as f32))
                             .texture(tex)
-                            .uv([[u0, v0], [u1, v0], [u1, v1], [u0, v1]]);
+                            .uv([u0, v0, u1, v1]);
                     }
                 }
             }

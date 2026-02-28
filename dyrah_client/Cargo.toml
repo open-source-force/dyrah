@@ -3,6 +3,10 @@ name = "dyrah_client"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default=[]
+hot_reload=["egor/hot_reload"]
+
 [dependencies]
 egor = { git = "https://github.com/wick3dr0se/egor", features = ["ui"] }
 wrym = { git = "https://github.com/wick3dr0se/wrym" }
