@@ -52,7 +52,7 @@ pub struct Game {
 impl Game {
     pub fn new() -> Self {
         Self {
-            client: Client::new(Transport::new("0.0.0.0:8080"), "0.0.0.0:0"),
+            client: Client::new(Transport::new("127.0.0.1:8080"), "0.0.0.0:0"),
             world: World::default(),
             map: Map::new("assets/map.json"),
             lobby: HashMap::new(),

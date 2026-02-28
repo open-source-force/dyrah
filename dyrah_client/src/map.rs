@@ -24,8 +24,9 @@ impl Map {
 
     pub fn load(&mut self, gfx: &mut Graphics) {
         for tileset in &self.tiled.tilesets {
-            if let Some(path) = &tileset.image {
-                let bytes = std::fs::read(format!("assets/{}", path)).unwrap();
+            if let Some(image_path) = &tileset.image {
+                let filename = std::path::Path::new(image_path).file_name().unwrap();
+                let bytes = std::fs::read(std::path::Path::new("assets").join(filename)).unwrap();
                 let img = image::load_from_memory(&bytes).unwrap().to_rgba8();
                 let (w, h) = img.dimensions();
                 let tex = gfx.load_texture(&bytes);
@@ -38,7 +39,7 @@ impl Map {
                     },
                 );
 
-                println!("Loaded tileset: {} ({}x{})", path, w, h);
+                println!("Loaded tileset: {} ({}x{})", image_path, w, h);
             }
         }
     }
