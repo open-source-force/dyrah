@@ -213,6 +213,10 @@ impl Game {
             *age < 10.0
         });
 
+        // 3 tiles/sec × 32 px/tile = 96 px/sec
+        let move_speed = 3.0 * dyrah_shared::TILE_SIZE;
+        let dt = timer.delta;
+
         self.world.query(
             |_,
              _: &Player,
@@ -220,18 +224,21 @@ impl Game {
              target_pos: &mut TargetWorldPos,
              spr: &mut Sprite| {
                 if pos.vec != target_pos.vec {
-                    pos.vec = pos.vec.lerp(target_pos.vec, 0.1);
+                    let diff = target_pos.vec - pos.vec;
+                    let dist = diff.length();
+                    let step = move_speed * dt;
 
-                    let delta = target_pos.vec - pos.vec;
-                    if delta.x != 0.0 {
-                        spr.anim.flip_x(delta.x < 0.0);
-                    }
-
-                    spr.anim.update(timer.delta);
-
-                    if pos.vec.distance(target_pos.vec) < 1.0 {
+                    if step >= dist {
                         pos.vec = target_pos.vec;
+                    } else {
+                        pos.vec += diff * (step / dist);
                     }
+
+                    if diff.x != 0.0 {
+                        spr.anim.flip_x(diff.x < 0.0);
+                    }
+
+                    spr.anim.update(dt);
                 } else {
                     spr.anim.set_frame(0);
                     target_pos.path = None;
