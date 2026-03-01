@@ -52,7 +52,8 @@ pub struct Game {
     // when starting from a stop, wait this long before sending to allow diagonal input
     move_start_grace: f32,
     was_moving: bool,
-    creature_tex: Option<usize>,
+    kitty_tex: Option<usize>,
+    ghost_tex: Option<usize>,
 }
 
 impl Game {
@@ -76,14 +77,16 @@ impl Game {
             dir_age: [f32::MAX; 4],
             move_start_grace: 0.0,
             was_moving: false,
-            creature_tex: None,
+            kitty_tex: None,
+            ghost_tex: None,
         }
     }
 
     pub fn load(&mut self, gfx: &mut Graphics) {
         self.map.load(gfx);
         self.player_tex = Some(gfx.load_texture(include_bytes!("../../assets/player.png")));
-        self.creature_tex = Some(gfx.load_texture(include_bytes!("../../assets/kitty.png")))
+        self.kitty_tex = Some(gfx.load_texture(include_bytes!("../../assets/kitty.png")));
+        self.ghost_tex = Some(gfx.load_texture(include_bytes!("../../assets/ghost.png")));
     }
 
     pub fn handle_events(&mut self) {
@@ -170,8 +173,19 @@ impl Game {
             }
             ServerMessage::CreatureBatchSpawned(spawns) => {
                 for spawn in spawns {
+                    let (tex, anim) = match spawn.kind.as_str() {
+                        "kitty" => (
+                            self.kitty_tex.unwrap(),
+                            Animation::new_directional(4, 4, 0.15),
+                        ),
+                        "ghost" => (
+                            self.ghost_tex.unwrap(),
+                            Animation::new_directional(3, 4, 0.15),
+                        ),
+                        kind => panic!("unknown creature kind: {}", kind),
+                    };
                     self.world.spawn((
-                        Creature,
+                        Creature { kind: spawn.kind },
                         WorldPos {
                             vec: spawn.position,
                         },
@@ -180,7 +194,7 @@ impl Game {
                             path: None,
                         },
                         Sprite {
-                            anim: Animation::new_directional(4, 4, 0.15),
+                            anim,
                             frame_size: Vec2::splat(TILE_SIZE),
                             sprite_size: Vec2::splat(TILE_SIZE),
                         },
@@ -460,12 +474,16 @@ impl Game {
         self.map.draw_tiles(gfx, player_tile);
 
         self.world.query(
-            |_, _: &dyrah_shared::components::Creature, world_pos: &WorldPos, spr: &Sprite| {
-                let draw_pos = world_pos.vec - TILE_SIZE / 4.0;
+            |_, creature: &Creature, world_pos: &WorldPos, spr: &Sprite| {
+                let tex = match creature.kind.as_str() {
+                    "kitty" => self.kitty_tex.unwrap(),
+                    "ghost" => self.ghost_tex.unwrap(),
+                    kind => panic!("unknown creature kind: {}", kind),
+                };
                 gfx.rect()
-                    .at(draw_pos)
+                    .at(world_pos.vec - TILE_SIZE / 4.0)
                     .size(Vec2::splat(TILE_SIZE))
-                    .texture(self.creature_tex.unwrap())
+                    .texture(tex)
                     .uv(spr.anim.frame());
             },
         );

@@ -5,6 +5,7 @@ use crate::NetId;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreatureSpawn {
+    pub kind: String,
     pub position: Vec2,
     pub health: f32,
 }

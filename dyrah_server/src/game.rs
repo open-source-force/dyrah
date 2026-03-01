@@ -41,16 +41,22 @@ impl Game {
         );
         let map = Map::new("assets/map.json");
         let world = World::default();
-        let kitty_pos = map.get_spawn("kitty").unwrap();
-        let kitty = world.spawn((
-            Creature,
-            TilePos { vec: kitty_pos },
-            TargetTilePos {
-                vec: kitty_pos,
-                path: None,
-                delay: 0.0,
-            },
-        ));
+
+        for (name, pos) in map.get_spawns() {
+            if name == "player" {
+                continue;
+            }
+
+            world.spawn((
+                Creature { kind: name },
+                TilePos { vec: pos },
+                TargetTilePos {
+                    vec: pos,
+                    path: None,
+                    delay: 0.0,
+                },
+            ));
+        }
 
         Self {
             db: Database::new(path),
@@ -308,13 +314,24 @@ impl Game {
                     continue;
                 }
 
+                let kind = self.world.get::<Creature>(entity).unwrap().kind.clone();
+                let follow_range = match kind.as_str() {
+                    "ghost" => 8,
+                    "kitty" => 4,
+                    _ => 0,
+                };
+
                 // find nearest player in 4 tiles
                 let nearest = player_positions
                     .iter()
                     .filter_map(|&p| {
                         let diff = p - tile_pos.vec;
                         let dist = diff.x.abs().max(diff.y.abs());
-                        if dist <= 4 { Some((dist, p)) } else { None }
+                        if dist <= follow_range {
+                            Some((dist, p))
+                        } else {
+                            None
+                        }
                     })
                     .min_by_key(|(d, _)| *d)
                     .map(|(_, p)| p);
@@ -373,12 +390,14 @@ impl Game {
 
     fn spawn_player(&mut self, id: NetId, username: String, addr: &String) {
         let mut creatures = Vec::new();
-        self.world.query(|_, _: &Creature, tile_pos: &TilePos| {
-            creatures.push(CreatureSpawn {
-                position: self.map.tiled.tile_to_world(tile_pos.vec),
-                health: 20.0,
+        self.world
+            .query(|_, creature: &Creature, tile_pos: &TilePos| {
+                creatures.push(CreatureSpawn {
+                    kind: creature.kind.clone(),
+                    position: self.map.tiled.tile_to_world(tile_pos.vec),
+                    health: 20.0,
+                });
             });
-        });
         let msg = ServerMessage::CreatureBatchSpawned(creatures);
         self.server.send_to(
             addr,

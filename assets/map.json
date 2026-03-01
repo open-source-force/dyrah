@@ -28,6 +28,94 @@
                  "width":32,
                  "x":1824,
                  "y":2880
+                }, 
+                {
+                 "height":32,
+                 "id":17,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":2144,
+                 "y":2368
+                }, 
+                {
+                 "height":32,
+                 "id":18,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":2496,
+                 "y":2752
+                }, 
+                {
+                 "height":32,
+                 "id":10,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1728,
+                 "y":1824
+                }, 
+                {
+                 "height":32,
+                 "id":11,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1216,
+                 "y":1728
+                }, 
+                {
+                 "height":32,
+                 "id":12,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1376,
+                 "y":2112
+                }, 
+                {
+                 "height":32,
+                 "id":13,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":960,
+                 "y":2336
+                }, 
+                {
+                 "height":32,
+                 "id":14,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":672,
+                 "y":2880
+                }, 
+                {
+                 "height":32,
+                 "id":15,
+                 "name":"ghost",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1312,
+                 "y":3104
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -702,7 +790,7 @@
          "y":0
         }],
  "nextlayerid":22,
- "nextobjectid":9,
+ "nextobjectid":19,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.11.2",

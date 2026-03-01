@@ -67,6 +67,18 @@ impl Map {
             .map(|o| self.tiled.world_to_tile(Vec2::new(o.x, o.y)))
     }
 
+    pub fn get_spawns(&self) -> Vec<(String, IVec2)> {
+        self.tiled
+            .get_objects("level_0/spawns")
+            .map(|o| {
+                (
+                    o.name.clone(),
+                    self.tiled.world_to_tile(Vec2::new(o.x, o.y)),
+                )
+            })
+            .collect()
+    }
+
     pub fn is_walkable(&self, tile_pos: IVec2, grid: &CollisionGrid) -> bool {
         grid.is_walkable(tile_pos)
     }

@@ -70,6 +70,14 @@ impl TiledMap {
             .and_then(|l| l.objects.as_ref()?.iter().find(|o| o.name == name))
     }
 
+    pub fn get_objects(&self, layer_name: &str) -> impl Iterator<Item = &TiledObject> {
+        self.get_layer(layer_name)
+            .and_then(|l| l.objects.as_ref())
+            .map(|o| o.iter())
+            .into_iter()
+            .flatten()
+    }
+
     pub fn has_tile(&self, layer_name: &str, tile_pos: IVec2) -> bool {
         let layer = match self.get_layer(layer_name) {
             Some(l) => l,
