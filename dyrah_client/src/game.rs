@@ -16,7 +16,7 @@ use wrym::{
 
 use dyrah_shared::{
     NetId, TILE_SIZE,
-    components::Player,
+    components::{Creature, Player},
     messages::{ClientInput, ClientMessage, ServerMessage},
 };
 
@@ -52,6 +52,7 @@ pub struct Game {
     // when starting from a stop, wait this long before sending to allow diagonal input
     move_start_grace: f32,
     was_moving: bool,
+    creature_tex: Option<usize>,
 }
 
 impl Game {
@@ -75,12 +76,14 @@ impl Game {
             dir_age: [f32::MAX; 4],
             move_start_grace: 0.0,
             was_moving: false,
+            creature_tex: None,
         }
     }
 
     pub fn load(&mut self, gfx: &mut Graphics) {
         self.map.load(gfx);
         self.player_tex = Some(gfx.load_texture(include_bytes!("../../assets/player.png")));
+        self.creature_tex = Some(gfx.load_texture(include_bytes!("../../assets/kitty.png")))
     }
 
     pub fn handle_events(&mut self) {
@@ -165,6 +168,32 @@ impl Game {
                     .unwrap_or_else(|| sender_id.to_string());
                 self.chat_messages.push((username, text, 0.0));
             }
+            ServerMessage::CreatureBatchSpawned(spawns) => {
+                for spawn in spawns {
+                    self.world.spawn((
+                        Creature,
+                        WorldPos {
+                            vec: spawn.position,
+                        },
+                        TargetWorldPos {
+                            vec: spawn.position,
+                            path: None,
+                        },
+                        Sprite {
+                            anim: Animation::new_directional(4, 4, 0.15),
+                            frame_size: Vec2::splat(TILE_SIZE),
+                            sprite_size: Vec2::splat(TILE_SIZE),
+                        },
+                    ));
+                }
+            }
+            ServerMessage::CreatureBatchMoved(moves) => {
+                for m in moves {
+                    if let Some(mut tgt_pos) = self.world.get_mut::<TargetWorldPos>(m.id.into()) {
+                        tgt_pos.vec = m.position;
+                    }
+                }
+            }
         }
     }
 
@@ -222,7 +251,6 @@ impl Game {
             .mouse_released(MouseButton::Left)
             .then_some(mouse_world_pos)
             .map(|mp| self.map.tiled.world_to_tile(mp.into()));
-        let moving = left || up || right || down || mouse_tile_pos.is_some();
         self.hovered_tile = Some(self.map.tiled.world_to_tile(mouse_world_pos));
 
         self.chat_messages.retain_mut(|(_, _, age)| {
@@ -231,7 +259,7 @@ impl Game {
         });
 
         // 3 tiles/sec × 32 px/tile = 96 px/sec
-        let move_speed = 3.0 * dyrah_shared::TILE_SIZE;
+        let move_speed = 3.0 * TILE_SIZE;
         let dt = timer.delta;
 
         self.world.query(
@@ -321,6 +349,44 @@ impl Game {
                     .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
             }
         }
+
+        self.world.query(
+            |_,
+             _: &Creature,
+             pos: &mut WorldPos,
+             target_pos: &mut TargetWorldPos,
+             spr: &mut Sprite| {
+                if pos.vec != target_pos.vec {
+                    let diff = target_pos.vec - pos.vec;
+                    let dist = diff.length();
+                    let step = move_speed * dt;
+                    if step >= dist {
+                        pos.vec = target_pos.vec;
+                    } else {
+                        pos.vec += diff * (step / dist);
+                    }
+
+                    let dir = if diff.x.abs() > diff.y.abs() {
+                        if diff.x > 0.0 {
+                            Direction::Right
+                        } else {
+                            Direction::Left
+                        }
+                    } else {
+                        if diff.y > 0.0 {
+                            Direction::Down
+                        } else {
+                            Direction::Up
+                        }
+                    };
+                    spr.anim.set_direction(dir);
+                    spr.anim.update_rows(dt, 2);
+                } else {
+                    let col = spr.anim.current % spr.anim.cols;
+                    spr.anim.current = col;
+                }
+            },
+        );
     }
 
     pub fn render(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
@@ -392,6 +458,17 @@ impl Game {
         };
 
         self.map.draw_tiles(gfx, player_tile);
+
+        self.world.query(
+            |_, _: &dyrah_shared::components::Creature, world_pos: &WorldPos, spr: &Sprite| {
+                let draw_pos = world_pos.vec - TILE_SIZE / 4.0;
+                gfx.rect()
+                    .at(draw_pos)
+                    .size(Vec2::splat(TILE_SIZE))
+                    .texture(self.creature_tex.unwrap())
+                    .uv(spr.anim.frame());
+            },
+        );
 
         if let Some(player) = self.player {
             if let Some(target) = self.world.get::<TargetWorldPos>(player) {

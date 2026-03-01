@@ -5,7 +5,7 @@
         {
          "draworder":"topdown",
          "id":17,
-         "name":"spawns",
+         "name":"level_0\/spawns",
          "objects":[
                 {
                  "height":32,
@@ -17,10 +17,21 @@
                  "width":32,
                  "x":1568,
                  "y":2880
+                }, 
+                {
+                 "height":32,
+                 "id":8,
+                 "name":"kitty",
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":32,
+                 "x":1824,
+                 "y":2880
                 }],
          "opacity":1,
          "type":"objectgroup",
-         "visible":false,
+         "visible":true,
          "x":0,
          "y":0
         }, 
@@ -574,7 +585,7 @@
          "name":"level_2\/roof",
          "opacity":1,
          "type":"tilelayer",
-         "visible":true,
+         "visible":false,
          "width":100,
          "x":0,
          "y":0
@@ -691,7 +702,7 @@
          "y":0
         }],
  "nextlayerid":22,
- "nextobjectid":5,
+ "nextobjectid":9,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.11.2",

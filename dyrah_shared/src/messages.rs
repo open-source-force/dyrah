@@ -4,6 +4,17 @@ use serde::{Deserialize, Serialize};
 use crate::NetId;
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct CreatureSpawn {
+    pub position: Vec2,
+    pub health: f32,
+}
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreatureMove {
+    pub id: u64,
+    pub position: Vec2,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     AuthSuccess {
         id: NetId,
@@ -26,6 +37,8 @@ pub enum ServerMessage {
         position: Vec2,
         path: Option<Vec<Vec2>>,
     },
+    CreatureBatchSpawned(Vec<CreatureSpawn>),
+    CreatureBatchMoved(Vec<CreatureMove>),
     ChatReceived {
         sender_id: NetId,
         text: String,

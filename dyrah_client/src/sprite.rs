@@ -81,6 +81,20 @@ impl Animation {
         }
     }
 
+    pub fn update_rows(&mut self, dt: f32, max_row: usize) {
+        if self.frames.is_empty() {
+            return;
+        }
+
+        self.timer += dt;
+        if self.timer >= self.frames[self.current].duration {
+            self.timer = 0.0;
+            let col = self.current % self.cols;
+            let next_row = (self.current / self.cols + 1) % (max_row + 1);
+            self.current = next_row * self.cols + col;
+        }
+    }
+
     pub fn frame(&self) -> [f32; 4] {
         let mut uv = self.frames[self.current].uv;
         if self.flipped_x {

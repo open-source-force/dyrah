@@ -2,6 +2,7 @@ use std::{collections::HashMap, path::Path, time::Duration};
 
 use bincode::{deserialize, serialize};
 use glam::IVec2;
+use rand::Rng;
 use secs::{Entity, World};
 use wrym::{
     Reliability,
@@ -10,8 +11,8 @@ use wrym::{
 
 use dyrah_shared::{
     NetId,
-    components::Player,
-    messages::{ClientMessage, ServerMessage},
+    components::{Creature, Player},
+    messages::{ClientMessage, CreatureMove, CreatureSpawn, ServerMessage},
 };
 
 use crate::{
@@ -32,19 +33,31 @@ pub struct Game {
 
 impl Game {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        let server = Server::new(
+            Transport::new("0.0.0.0:8080"),
+            ServerConfig {
+                client_timeout: Duration::from_mins(10),
+            },
+        );
         let map = Map::new("assets/map.json");
+        let world = World::default();
+        let kitty_pos = map.get_spawn("kitty").unwrap();
+        let kitty = world.spawn((
+            Creature,
+            TilePos { vec: kitty_pos },
+            TargetTilePos {
+                vec: kitty_pos,
+                path: None,
+                delay: 0.0,
+            },
+        ));
 
         Self {
             db: Database::new(path),
-            server: Server::new(
-                Transport::new("0.0.0.0:8080"),
-                ServerConfig {
-                    client_timeout: Duration::from_mins(10),
-                },
-            ),
+            server,
             pending: HashMap::new(),
             lobby: HashMap::new(),
-            world: World::default(),
+            world,
             collision_grid: CollisionGrid::new(&map),
             map,
         }
@@ -208,6 +221,7 @@ impl Game {
     pub fn update(&mut self, dt: f32) {
         self.collision_grid.update(&self.map, &self.world);
 
+        // player path following
         let moving: Vec<(NetId, Entity)> = self
             .lobby
             .iter()
@@ -227,7 +241,7 @@ impl Game {
                             path.remove(0);
                             target_pos.vec = next;
                             tile_pos.vec = next;
-                            target_pos.delay = 0.3; // matches client rate
+                            target_pos.delay = 0.3;
 
                             let msg = ServerMessage::PlayerMoved {
                                 id,
@@ -243,9 +257,135 @@ impl Game {
                 }
             }
         }
+
+        // collect player tile positions for creature AI
+        let player_positions: Vec<IVec2> = self
+            .lobby
+            .values()
+            .map(|&(entity, _)| self.world.get::<TilePos>(entity).unwrap().vec)
+            .collect();
+
+        let creatures: Vec<Entity> = {
+            let mut v = Vec::new();
+            self.world
+                .query(|entity, _: &Creature, _: &TilePos, _: &TargetTilePos| {
+                    v.push(entity);
+                });
+            v
+        };
+        let mut crea_moves = Vec::new();
+        let mut rng = rand::thread_rng();
+
+        for entity in creatures {
+            let mut target_pos = self.world.get_mut::<TargetTilePos>(entity).unwrap();
+            let mut tile_pos = self.world.get_mut::<TilePos>(entity).unwrap();
+
+            target_pos.delay -= dt;
+
+            if tile_pos.vec == target_pos.vec && target_pos.delay <= 0.0 {
+                if let Some(path) = target_pos.path.as_mut() {
+                    if let Some(next) = path.first().copied() {
+                        if self.map.is_walkable(next, &self.collision_grid) {
+                            let diagonal = next - tile_pos.vec;
+                            path.remove(0);
+                            target_pos.vec = next;
+                            tile_pos.vec = next;
+                            target_pos.delay = if diagonal.x != 0 && diagonal.y != 0 {
+                                0.45
+                            } else {
+                                0.3
+                            };
+                            crea_moves.push(CreatureMove {
+                                id: entity.id(),
+                                position: self.map.tiled.tile_to_world(next),
+                            });
+                        } else {
+                            target_pos.path = None;
+                        }
+                    } else {
+                        target_pos.path = None; // path exhausted
+                    }
+                    continue;
+                }
+
+                // find nearest player in 4 tiles
+                let nearest = player_positions
+                    .iter()
+                    .filter_map(|&p| {
+                        let diff = p - tile_pos.vec;
+                        let dist = diff.x.abs().max(diff.y.abs());
+                        if dist <= 4 { Some((dist, p)) } else { None }
+                    })
+                    .min_by_key(|(d, _)| *d)
+                    .map(|(_, p)| p);
+
+                if let Some(player_tile) = nearest {
+                    let adjacent = [
+                        IVec2::new(0, -1),
+                        IVec2::new(0, 1),
+                        IVec2::new(-1, 0),
+                        IVec2::new(1, 0),
+                    ]
+                    .iter()
+                    .map(|&d| player_tile + d)
+                    .filter(|&t| self.map.is_walkable(t, &self.collision_grid))
+                    .min_by_key(|&t| {
+                        let diff = t - tile_pos.vec;
+                        diff.x.abs() + diff.y.abs()
+                    });
+
+                    if let Some(target_tile) = adjacent {
+                        if let Some(path) =
+                            self.map
+                                .find_path(tile_pos.vec, target_tile, &self.collision_grid)
+                        {
+                            target_pos.path = Some(path);
+                        }
+                    }
+                } else {
+                    let dir = IVec2::new(rng.gen_range(-1..=1), rng.gen_range(-1..=1));
+                    if dir != IVec2::ZERO {
+                        let next = tile_pos.vec + dir;
+                        if self.map.is_walkable(next, &self.collision_grid) {
+                            tile_pos.vec = next;
+                            target_pos.vec = next;
+                            target_pos.delay = if dir.x != 0 && dir.y != 0 { 0.45 } else { 0.3 };
+                            crea_moves.push(CreatureMove {
+                                id: entity.id(),
+                                position: self.map.tiled.tile_to_world(next),
+                            });
+                        } else {
+                            target_pos.delay = 0.5;
+                        }
+                    } else {
+                        target_pos.delay = 1.0;
+                    }
+                }
+            }
+        }
+
+        if !crea_moves.is_empty() {
+            let msg = ServerMessage::CreatureBatchMoved(crea_moves);
+            self.server
+                .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
+        }
     }
 
     fn spawn_player(&mut self, id: NetId, username: String, addr: &String) {
+        let mut creatures = Vec::new();
+        self.world.query(|_, _: &Creature, tile_pos: &TilePos| {
+            creatures.push(CreatureSpawn {
+                position: self.map.tiled.tile_to_world(tile_pos.vec),
+                health: 20.0,
+            });
+        });
+        let msg = ServerMessage::CreatureBatchSpawned(creatures);
+        self.server.send_to(
+            addr,
+            &serialize(&msg).unwrap(),
+            Reliability::ReliableOrdered { channel: 0 },
+        );
+
         // sync existing players to the new client
         for (&other_id, &(player, ref other_name)) in &self.lobby {
             let target_pos = self.world.get::<TargetTilePos>(player).unwrap();

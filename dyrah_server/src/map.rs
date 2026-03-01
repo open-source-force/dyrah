@@ -63,7 +63,7 @@ impl Map {
 
     pub fn get_spawn(&self, name: &str) -> Option<IVec2> {
         self.tiled
-            .get_object("spawns", name)
+            .get_object("level_0/spawns", name)
             .map(|o| self.tiled.world_to_tile(Vec2::new(o.x, o.y)))
     }
 
@@ -82,8 +82,14 @@ impl Map {
     fn get_walkable_successors(&self, tile_pos: IVec2, grid: &CollisionGrid) -> Vec<(IVec2, u32)> {
         let mut successors = Vec::new();
         for &(dx, dy, cost) in &[
-            (0, 1, 2), (1, 0, 2), (0, -1, 2), (-1, 0, 2),
-            (1, 1, 3), (1, -1, 3), (-1, 1, 3), (-1, -1, 3),
+            (0, 1, 2),
+            (1, 0, 2),
+            (0, -1, 2),
+            (-1, 0, 2),
+            (1, 1, 3),
+            (1, -1, 3),
+            (-1, 1, 3),
+            (-1, -1, 3),
         ] {
             let neighbor = IVec2::new(tile_pos.x + dx, tile_pos.y + dy);
             if neighbor.x >= 0
