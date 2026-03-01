@@ -70,6 +70,23 @@ impl TiledMap {
             .and_then(|l| l.objects.as_ref()?.iter().find(|o| o.name == name))
     }
 
+    pub fn has_tile(&self, layer_name: &str, tile_pos: IVec2) -> bool {
+        let layer = match self.get_layer(layer_name) {
+            Some(l) => l,
+            None => return false,
+        };
+        let (x, y) = (tile_pos.x as usize, tile_pos.y as usize);
+        let w = layer.width.unwrap() as usize;
+        let h = layer.height.unwrap() as usize;
+        if x >= w || y >= h {
+            return false;
+        }
+        layer
+            .data
+            .as_ref()
+            .map_or(false, |data| data[y * w + x] != 0)
+    }
+
     pub fn is_walkable(&self, layer_name: &str, tile_pos: IVec2) -> bool {
         let layer = match self.get_layer(layer_name) {
             Some(l) => l,

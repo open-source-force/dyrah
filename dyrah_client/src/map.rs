@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use dyrah_shared::map::TiledMap;
-use egor::{math::Vec2, render::Graphics};
+use egor::{
+    math::{IVec2, Vec2},
+    render::Graphics,
+};
 
 pub struct Tileset {
     dimensions: (u32, u32),
@@ -11,6 +14,7 @@ pub struct Tileset {
 pub struct Map {
     pub tiled: TiledMap,
     sets: HashMap<u32, Tileset>,
+    pub current_level: usize,
 }
 
 impl Map {
@@ -19,6 +23,7 @@ impl Map {
         Self {
             tiled,
             sets: HashMap::new(),
+            current_level: 0,
         }
     }
 
@@ -99,10 +104,39 @@ impl Map {
         }
     }
 
-    pub fn draw_tiles(&self, gfx: &mut Graphics) {
-        for layer in &self.tiled.layers {
-            if layer.visible && layer.data.is_some() {
-                self.draw_tile_layer(gfx, &layer.name);
+    fn get_roof_level(&self, player_tile: IVec2) -> Option<usize> {
+        self.tiled
+            .layers
+            .iter()
+            .filter_map(|l| {
+                l.name
+                    .strip_prefix("level_")
+                    .and_then(|s| s.strip_suffix("/roof"))
+                    .and_then(|n| n.parse::<usize>().ok())
+            })
+            .find(|&level| {
+                let layer = format!("level_{}/roof", level);
+                (-1..=1_i32)
+                    .flat_map(|dx| (-1..=1_i32).map(move |dy| IVec2::new(dx, dy)))
+                    .any(|offset| self.tiled.has_tile(&layer, player_tile + offset))
+            })
+    }
+
+    pub fn draw_tiles(&self, gfx: &mut Graphics, player_tile: IVec2) {
+        if self.get_roof_level(player_tile).is_some() {
+            let ground = format!("level_{}/ground", self.current_level);
+            let walls = format!("level_{}/walls", self.current_level);
+            if self.tiled.get_layer(&ground).is_some() {
+                self.draw_tile_layer(gfx, &ground);
+            }
+            if self.tiled.get_layer(&walls).is_some() {
+                self.draw_tile_layer(gfx, &walls);
+            }
+        } else {
+            for layer in &self.tiled.layers {
+                if layer.visible && layer.data.is_some() {
+                    self.draw_tile_layer(gfx, &layer.name);
+                }
             }
         }
     }

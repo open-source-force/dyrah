@@ -370,7 +370,16 @@ impl Game {
         let screen = gfx.screen_size();
         gfx.clear(Color::BLUE);
 
-        self.map.draw_tiles(gfx);
+        let player_tile = if let Some(player) = self.player {
+            self.world
+                .get::<WorldPos>(player)
+                .map(|pos| self.map.tiled.world_to_tile(pos.vec))
+                .unwrap_or(IVec2::ZERO)
+        } else {
+            IVec2::ZERO
+        };
+
+        self.map.draw_tiles(gfx, player_tile);
 
         if let Some(player) = self.player {
             if let Some(target) = self.world.get::<TargetWorldPos>(player) {

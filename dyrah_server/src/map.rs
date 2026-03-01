@@ -26,7 +26,7 @@ impl CollisionGrid {
         for y in 0..self.height {
             for x in 0..self.width {
                 let tile_pos = IVec2::new(x as i32, y as i32);
-                if !map.tiled.is_walkable("colliders", tile_pos) {
+                if !map.tiled.is_walkable("level_0/colliders", tile_pos) {
                     self.grid[y * self.width + x] = true;
                 }
             }
