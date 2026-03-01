@@ -1,5 +1,12 @@
 use egor::math::Vec2;
 
+pub enum Direction {
+    Up,
+    Left,
+    Right,
+    Down,
+}
+
 #[derive(Debug)]
 struct Frame {
     uv: [f32; 4],
@@ -9,8 +16,9 @@ struct Frame {
 #[derive(Debug)]
 pub struct Animation {
     frames: Vec<Frame>,
+    pub cols: usize,
     timer: f32,
-    current: usize,
+    pub current: usize,
     flipped_x: bool,
     flipped_y: bool,
 }
@@ -26,8 +34,31 @@ impl Animation {
                 duration: dur,
             });
         }
+
         Self {
             frames,
+            cols,
+            timer: 0.0,
+            current: 0,
+            flipped_x: false,
+            flipped_y: false,
+        }
+    }
+
+    pub fn new_directional(rows: usize, cols: usize, dur: f32) -> Self {
+        let total = rows * cols;
+        let mut frames = Vec::with_capacity(total);
+        let (fw, fh) = (1.0 / cols as f32, 1.0 / rows as f32);
+        for i in 0..total {
+            let (x, y) = ((i % cols) as f32 * fw, (i / cols) as f32 * fh);
+            frames.push(Frame {
+                uv: [x, y, x + fw, y + fh],
+                duration: dur,
+            });
+        }
+        Self {
+            frames,
+            cols,
             timer: 0.0,
             current: 0,
             flipped_x: false,
@@ -43,7 +74,10 @@ impl Animation {
         self.timer += dt;
         if self.timer >= self.frames[self.current].duration {
             self.timer = 0.0;
-            self.current = (self.current + 1) % self.frames.len();
+            let col = self.current % self.cols;
+            let rows = self.frames.len() / self.cols;
+            let next_row = (self.current / self.cols + 1) % rows;
+            self.current = next_row * self.cols + col;
         }
     }
 
@@ -77,5 +111,31 @@ impl Animation {
             offset.y -= frame_size.y - sprite_size.y;
         }
         offset
+    }
+
+    pub fn set_row(&mut self, row: usize) {
+        let start = row * self.cols;
+        if self.current / self.cols != row {
+            self.current = start;
+            self.timer = 0.0;
+        }
+    }
+
+    pub fn set_direction(&mut self, dir: Direction) {
+        let col = match dir {
+            Direction::Up => 0,
+            Direction::Left => 1,
+            Direction::Right => 2,
+            Direction::Down => 3,
+        };
+        // current frame within the column (0..rows)
+        let frame_in_col = self.current / self.cols;
+        let target = frame_in_col * self.cols + col;
+        if self.current % self.cols != col {
+            self.current = col; // reset to first frame of new direction
+            self.timer = 0.0;
+        } else {
+            self.current = target;
+        }
     }
 }

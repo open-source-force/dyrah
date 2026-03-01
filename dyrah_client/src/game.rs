@@ -15,7 +15,7 @@ use wrym::{
 };
 
 use dyrah_shared::{
-    NetId,
+    NetId, TILE_SIZE,
     components::Player,
     messages::{ClientInput, ClientMessage, ServerMessage},
 };
@@ -23,7 +23,7 @@ use dyrah_shared::{
 use crate::{
     components::{Sprite, TargetWorldPos, WorldPos},
     map::Map,
-    sprite::Animation,
+    sprite::{Animation, Direction},
 };
 
 enum AppState {
@@ -80,7 +80,7 @@ impl Game {
 
     pub fn load(&mut self, gfx: &mut Graphics) {
         self.map.load(gfx);
-        self.player_tex = Some(gfx.load_texture(include_bytes!("../../assets/wizard.png")));
+        self.player_tex = Some(gfx.load_texture(include_bytes!("../../assets/player.png")));
     }
 
     pub fn handle_events(&mut self) {
@@ -130,9 +130,9 @@ impl Game {
                         path: None,
                     },
                     Sprite {
-                        anim: Animation::new(1, 6, 6, 0.2),
-                        frame_size: Vec2::splat(64.0),
-                        sprite_size: Vec2::new(32.0, 64.0),
+                        anim: Animation::new_directional(3, 4, 0.2),
+                        frame_size: Vec2::splat(TILE_SIZE),
+                        sprite_size: Vec2::splat(TILE_SIZE),
                     },
                 ));
 
@@ -178,6 +178,7 @@ impl Game {
         if let Some(player) = self.player {
             if let Some(pos) = self.world.get::<WorldPos>(player) {
                 let screen = gfx.screen_size();
+                gfx.camera().set_zoom(2.0);
                 gfx.camera().center(pos.vec, screen);
             }
         }
@@ -250,13 +251,24 @@ impl Game {
                         pos.vec += diff * (step / dist);
                     }
 
-                    if diff.x != 0.0 {
-                        spr.anim.flip_x(diff.x < 0.0);
-                    }
-
+                    let dir = if diff.x.abs() > diff.y.abs() {
+                        if diff.x > 0.0 {
+                            Direction::Right
+                        } else {
+                            Direction::Left
+                        }
+                    } else {
+                        if diff.y > 0.0 {
+                            Direction::Down
+                        } else {
+                            Direction::Up
+                        }
+                    };
+                    spr.anim.set_direction(dir);
                     spr.anim.update(dt);
                 } else {
-                    spr.anim.set_frame(0);
+                    let col = spr.anim.current % spr.anim.cols;
+                    spr.anim.current = col;
                     target_pos.path = None;
                 }
             },
@@ -384,7 +396,7 @@ impl Game {
         if let Some(player) = self.player {
             if let Some(target) = self.world.get::<TargetWorldPos>(player) {
                 if let Some(path) = &target.path {
-                    let tile_size = 32.0;
+                    let tile_size = TILE_SIZE;
                     let half = tile_size / 2.0;
 
                     if path.len() >= 2 {
@@ -435,12 +447,10 @@ impl Game {
 
         self.world
             .query(|player, _: &Player, world_pos: &WorldPos, spr: &Sprite| {
-                let draw_pos = world_pos.vec
-                    + spr
-                        .anim
-                        .offset(spr.frame_size, spr.sprite_size, Vec2::splat(32.0));
+                let draw_pos = world_pos.vec - TILE_SIZE / 4.0;
                 gfx.rect()
                     .at(draw_pos)
+                    .size(Vec2::splat(TILE_SIZE))
                     .texture(self.player_tex.unwrap())
                     .uv(spr.anim.frame());
 
@@ -490,7 +500,7 @@ impl Game {
 
         if let Some(tile) = self.hovered_tile {
             let p = self.map.tiled.tile_to_world(tile);
-            let s = 32.0;
+            let s = TILE_SIZE;
             gfx.polyline()
                 .points(&[
                     p,
