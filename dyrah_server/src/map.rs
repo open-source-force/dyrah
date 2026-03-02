@@ -83,26 +83,13 @@ impl Map {
         grid.is_walkable(tile_pos)
     }
 
-    fn chebyshev_distance(&self, a: IVec2, b: IVec2) -> u32 {
-        let dx = (a.x - b.x).abs() as u32;
-        let dy = (a.y - b.y).abs() as u32;
-        // cardinal cost=2, diagonal cost=3; Chebyshev: max(dx,dy)*2 + min(dx,dy)*(3-2)
-        let (min, max) = if dx < dy { (dx, dy) } else { (dy, dx) };
-        max * 2 + min
+    fn manhattan_distance(&self, a: IVec2, b: IVec2) -> u32 {
+        ((a.x - b.x).abs() + (a.y - b.y).abs()) as u32
     }
 
     fn get_walkable_successors(&self, tile_pos: IVec2, grid: &CollisionGrid) -> Vec<(IVec2, u32)> {
         let mut successors = Vec::new();
-        for &(dx, dy, cost) in &[
-            (0, 1, 2),
-            (1, 0, 2),
-            (0, -1, 2),
-            (-1, 0, 2),
-            (1, 1, 3),
-            (1, -1, 3),
-            (-1, 1, 3),
-            (-1, -1, 3),
-        ] {
+        for (dx, dy) in &[(0, 1), (1, 0), (0, -1), (-1, 0)] {
             let neighbor = IVec2::new(tile_pos.x + dx, tile_pos.y + dy);
             if neighbor.x >= 0
                 && neighbor.y >= 0
@@ -110,15 +97,7 @@ impl Map {
                 && neighbor.y < self.tiled.height as i32
                 && grid.is_walkable(neighbor)
             {
-                // for diagonals, also require both adjacent cardinal tiles to be walkable
-                if dx != 0 && dy != 0 {
-                    let adj_x = IVec2::new(tile_pos.x + dx, tile_pos.y);
-                    let adj_y = IVec2::new(tile_pos.x, tile_pos.y + dy);
-                    if !grid.is_walkable(adj_x) || !grid.is_walkable(adj_y) {
-                        continue;
-                    }
-                }
-                successors.push((neighbor, cost));
+                successors.push((neighbor, 1));
             }
         }
         successors
@@ -128,7 +107,7 @@ impl Map {
         let result = astar(
             &start,
             |&pos| self.get_walkable_successors(pos, grid),
-            |&pos| self.chebyshev_distance(pos, end),
+            |&pos| self.manhattan_distance(pos, end),
             |&pos| pos == end,
         );
         result.map(|(path, _)| path.into_iter().skip(1).collect())
