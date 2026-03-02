@@ -2,6 +2,8 @@ mod components;
 mod game;
 mod map;
 mod sprite;
+mod systems;
+mod texture;
 
 use egor::app::{App, FrameContext};
 

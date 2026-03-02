@@ -1,5 +1,3 @@
-use egor::math::Vec2;
-
 pub enum Direction {
     Up,
     Left,
@@ -24,28 +22,7 @@ pub struct Animation {
 }
 
 impl Animation {
-    pub fn new(rows: usize, cols: usize, total: usize, dur: f32) -> Self {
-        let mut frames = Vec::with_capacity(total);
-        let (fw, fh) = (1.0 / cols as f32, 1.0 / rows as f32);
-        for i in 0..total {
-            let (x, y) = ((i % cols) as f32 * fw, (i / cols) as f32 * fh);
-            frames.push(Frame {
-                uv: [x, y, x + fw, y + fh],
-                duration: dur,
-            });
-        }
-
-        Self {
-            frames,
-            cols,
-            timer: 0.0,
-            current: 0,
-            flipped_x: false,
-            flipped_y: false,
-        }
-    }
-
-    pub fn new_directional(rows: usize, cols: usize, dur: f32) -> Self {
+    pub fn new(rows: usize, cols: usize, dur: f32) -> Self {
         let total = rows * cols;
         let mut frames = Vec::with_capacity(total);
         let (fw, fh) = (1.0 / cols as f32, 1.0 / rows as f32);
@@ -81,20 +58,6 @@ impl Animation {
         }
     }
 
-    pub fn update_rows(&mut self, dt: f32, max_row: usize) {
-        if self.frames.is_empty() {
-            return;
-        }
-
-        self.timer += dt;
-        if self.timer >= self.frames[self.current].duration {
-            self.timer = 0.0;
-            let col = self.current % self.cols;
-            let next_row = (self.current / self.cols + 1) % (max_row + 1);
-            self.current = next_row * self.cols + col;
-        }
-    }
-
     pub fn frame(&self) -> [f32; 4] {
         let mut uv = self.frames[self.current].uv;
         if self.flipped_x {
@@ -104,35 +67,6 @@ impl Animation {
             uv.swap(1, 3); // v0 <-> v1
         }
         uv
-    }
-    pub fn set_frame(&self, f: usize) -> [f32; 4] {
-        self.frames[f].uv
-    }
-
-    pub fn flip_x(&mut self, flip: bool) {
-        self.flipped_x = flip;
-    }
-    pub fn flip_y(&mut self, flip: bool) {
-        self.flipped_y = flip;
-    }
-
-    pub fn offset(&self, frame_size: Vec2, sprite_size: Vec2, tile_size: Vec2) -> Vec2 {
-        let mut offset = Vec2::new(0.0, -(sprite_size.y - tile_size.y));
-        if self.flipped_x {
-            offset.x -= frame_size.x - sprite_size.x;
-        }
-        if self.flipped_y {
-            offset.y -= frame_size.y - sprite_size.y;
-        }
-        offset
-    }
-
-    pub fn set_row(&mut self, row: usize) {
-        let start = row * self.cols;
-        if self.current / self.cols != row {
-            self.current = start;
-            self.timer = 0.0;
-        }
     }
 
     pub fn set_direction(&mut self, dir: Direction) {
@@ -151,5 +85,10 @@ impl Animation {
         } else {
             self.current = target;
         }
+    }
+
+    pub fn reset_to_idle(&mut self) {
+        self.current = self.current % self.cols;
+        self.timer = 0.0;
     }
 }

@@ -15,16 +15,32 @@ use wrym::{
 };
 
 use dyrah_shared::{
-    NetId, TILE_SIZE,
+    NetId,
     components::{Creature, Player},
     messages::{ClientInput, ClientMessage, ServerMessage},
 };
 
 use crate::{
+    asset,
     components::{Sprite, TargetWorldPos, WorldPos},
     map::Map,
-    sprite::{Animation, Direction},
+    sprite::Animation,
+    systems::{movement, render},
+    texture::TextureManager,
 };
+
+pub struct AuthState {
+    pub username: String,
+    pub password: String,
+    pub error: Option<String>,
+}
+
+pub struct InputState {
+    pub last_input_time: f32,
+    pub dir_age: [f32; 4],
+    pub move_start_grace: f32,
+    pub was_moving: bool,
+}
 
 enum AppState {
     Auth,
@@ -36,24 +52,15 @@ pub struct Game {
     world: World,
     map: Map,
     lobby: HashMap<NetId, (Entity, String)>,
-    last_input_time: f32,
-    player_tex: Option<usize>,
+    textures: TextureManager,
     player: Option<Entity>,
     player_id: Option<NetId>,
     chat_messages: Vec<(String, String, f32)>,
     chat_input: String,
     app_state: AppState,
-    auth_username: String,
-    auth_password: String,
-    auth_error: Option<String>,
+    auth_state: AuthState,
+    input_state: InputState,
     hovered_tile: Option<IVec2>,
-    // time since each direction key was last held (rises when released)
-    dir_age: [f32; 4], // left, up, right, down
-    // when starting from a stop, wait this long before sending to allow diagonal input
-    move_start_grace: f32,
-    was_moving: bool,
-    kitty_tex: Option<usize>,
-    ghost_tex: Option<usize>,
 }
 
 impl Game {
@@ -63,30 +70,33 @@ impl Game {
             world: World::default(),
             map: Map::new("assets/map.json"),
             lobby: HashMap::new(),
-            last_input_time: 0.0,
-            player_tex: None,
+            textures: TextureManager::new(),
             player: None,
             player_id: None,
             chat_messages: Vec::new(),
             chat_input: String::new(),
             app_state: AppState::Auth,
-            auth_username: String::new(),
-            auth_password: String::new(),
-            auth_error: None,
+            auth_state: AuthState {
+                username: String::new(),
+                password: String::new(),
+                error: None,
+            },
+            input_state: InputState {
+                last_input_time: 0.0,
+                dir_age: [f32::MAX; 4],
+                move_start_grace: 0.0,
+                was_moving: false,
+            },
             hovered_tile: None,
-            dir_age: [f32::MAX; 4],
-            move_start_grace: 0.0,
-            was_moving: false,
-            kitty_tex: None,
-            ghost_tex: None,
         }
     }
 
     pub fn load(&mut self, gfx: &mut Graphics) {
         self.map.load(gfx);
-        self.player_tex = Some(gfx.load_texture(include_bytes!("../../assets/player.png")));
-        self.kitty_tex = Some(gfx.load_texture(include_bytes!("../../assets/kitty.png")));
-        self.ghost_tex = Some(gfx.load_texture(include_bytes!("../../assets/ghost.png")));
+
+        self.textures.load(gfx, "player", asset!("player.png"));
+        self.textures.load(gfx, "kitty", asset!("kitty.png"));
+        self.textures.load(gfx, "ghost", asset!("ghost.png"));
     }
 
     pub fn handle_events(&mut self) {
@@ -100,7 +110,7 @@ impl Game {
                 ClientEvent::Disconnected => {
                     println!("Lost connection to server");
                     self.app_state = AppState::Auth;
-                    self.auth_error = Some("Lost connection to server".into());
+                    self.auth_state.error = Some("Lost connection to server".into());
                 }
                 ClientEvent::MessageReceived(bytes) => {
                     let msg = deserialize::<ServerMessage>(&bytes).unwrap();
@@ -116,10 +126,10 @@ impl Game {
                 // server handles this implicitly via PlayerSpawned for our own id,
                 // but we transition state here if you add it explicitly
                 self.app_state = AppState::InGame;
-                self.auth_error = None;
+                self.auth_state.error = None;
             }
             ServerMessage::AuthFailed { reason } => {
-                self.auth_error = Some(reason);
+                self.auth_state.error = Some(reason);
             }
             ServerMessage::PlayerSpawned {
                 id,
@@ -136,9 +146,7 @@ impl Game {
                         path: None,
                     },
                     Sprite {
-                        anim: Animation::new_directional(3, 4, 0.2),
-                        frame_size: Vec2::splat(TILE_SIZE),
-                        sprite_size: Vec2::splat(TILE_SIZE),
+                        anim: Animation::new(3, 4, 0.2),
                     },
                 ));
 
@@ -173,15 +181,9 @@ impl Game {
             }
             ServerMessage::CreatureBatchSpawned(spawns) => {
                 for spawn in spawns {
-                    let (tex, anim) = match spawn.kind.as_str() {
-                        "kitty" => (
-                            self.kitty_tex.unwrap(),
-                            Animation::new_directional(4, 4, 0.15),
-                        ),
-                        "ghost" => (
-                            self.ghost_tex.unwrap(),
-                            Animation::new_directional(3, 4, 0.15),
-                        ),
+                    let anim = match spawn.kind.as_str() {
+                        "kitty" => Animation::new(4, 4, 0.15),
+                        "ghost" => Animation::new(3, 4, 0.15),
                         kind => panic!("unknown creature kind: {}", kind),
                     };
                     self.world.spawn((
@@ -193,11 +195,7 @@ impl Game {
                             vec: spawn.position,
                             path: None,
                         },
-                        Sprite {
-                            anim,
-                            frame_size: Vec2::splat(TILE_SIZE),
-                            sprite_size: Vec2::splat(TILE_SIZE),
-                        },
+                        Sprite { anim },
                     ));
                 }
             }
@@ -218,6 +216,8 @@ impl Game {
         egui_ctx: &mut &Context,
         timer: &FrameTimer,
     ) {
+        self.world.flush_despawned();
+
         if let Some(player) = self.player {
             if let Some(pos) = self.world.get::<WorldPos>(player) {
                 let screen = gfx.screen_size();
@@ -225,10 +225,19 @@ impl Game {
                 gfx.camera().center(pos.vec, screen);
             }
         }
-        // dont process game input while on the auth screen
+
         if matches!(self.app_state, AppState::Auth) {
             return;
         }
+
+        let dt = timer.delta;
+
+        movement::update(&mut self.world, dt);
+
+        self.chat_messages.retain_mut(|(_, _, age)| {
+            *age += dt;
+            *age < 10.0
+        });
 
         let egui_focused = egui_ctx.wants_keyboard_input();
         let raw_dirs = if egui_focused {
@@ -242,21 +251,20 @@ impl Game {
             ]
         };
 
-        // ~3 frames at 60fps
         let diagonal_buffer = 3.0 / 60.0;
         for i in 0..4 {
             if raw_dirs[i] {
-                self.dir_age[i] = 0.0;
+                self.input_state.dir_age[i] = 0.0;
             } else {
-                self.dir_age[i] += timer.delta;
+                self.input_state.dir_age[i] += dt;
             }
         }
 
         let buffered = [
-            self.dir_age[0] < diagonal_buffer,
-            self.dir_age[1] < diagonal_buffer,
-            self.dir_age[2] < diagonal_buffer,
-            self.dir_age[3] < diagonal_buffer,
+            self.input_state.dir_age[0] < diagonal_buffer,
+            self.input_state.dir_age[1] < diagonal_buffer,
+            self.input_state.dir_age[2] < diagonal_buffer,
+            self.input_state.dir_age[3] < diagonal_buffer,
         ];
         let [left, up, right, down] = buffered;
 
@@ -267,152 +275,62 @@ impl Game {
             .map(|mp| self.map.tiled.world_to_tile(mp.into()));
         self.hovered_tile = Some(self.map.tiled.world_to_tile(mouse_world_pos));
 
-        self.chat_messages.retain_mut(|(_, _, age)| {
-            *age += timer.delta;
-            *age < 10.0
-        });
+        self.input_state.last_input_time += dt;
 
-        // 3 tiles/sec × 32 px/tile = 96 px/sec
-        let move_speed = 3.0 * TILE_SIZE;
-        let dt = timer.delta;
-
-        self.world.query(
-            |_,
-             _: &Player,
-             pos: &mut WorldPos,
-             target_pos: &mut TargetWorldPos,
-             spr: &mut Sprite| {
-                if pos.vec != target_pos.vec {
-                    let diff = target_pos.vec - pos.vec;
-                    let dist = diff.length();
-                    let step = move_speed * dt;
-
-                    if step >= dist {
-                        pos.vec = target_pos.vec;
-                    } else {
-                        pos.vec += diff * (step / dist);
-                    }
-
-                    let dir = if diff.x.abs() > diff.y.abs() {
-                        if diff.x > 0.0 {
-                            Direction::Right
-                        } else {
-                            Direction::Left
-                        }
-                    } else {
-                        if diff.y > 0.0 {
-                            Direction::Down
-                        } else {
-                            Direction::Up
-                        }
-                    };
-                    spr.anim.set_direction(dir);
-                    spr.anim.update(dt);
-                } else {
-                    let col = spr.anim.current % spr.anim.cols;
-                    spr.anim.current = col;
-                    target_pos.path = None;
-                }
-            },
-        );
-
-        self.last_input_time += timer.delta;
-
-        // mouse clicks send immediately — no grace delay or rate limiting
         if mouse_tile_pos.is_some() {
-            self.last_input_time = 0.0;
-
-            let msg = ClientMessage::PlayerUpdate {
-                input: ClientInput {
-                    left: false,
-                    up: false,
-                    right: false,
-                    down: false,
-                    mouse_tile_pos,
-                },
-            };
-            self.client
-                .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+            self.input_state.last_input_time = 0.0;
+            self.client.send(
+                &serialize(&ClientMessage::PlayerUpdate {
+                    input: ClientInput {
+                        left: false,
+                        up: false,
+                        right: false,
+                        down: false,
+                        mouse_tile_pos,
+                    },
+                })
+                .unwrap(),
+                Reliability::Unreliable,
+            );
         } else {
             let keyboard_moving = left || up || right || down;
-
-            // when keyboard movement starts from a stop, wait the buffer window
-            // so the player can add a second key for diagonal
-            if keyboard_moving && !self.was_moving {
-                self.move_start_grace = diagonal_buffer;
+            if keyboard_moving && !self.input_state.was_moving {
+                self.input_state.move_start_grace = diagonal_buffer;
             }
-            self.was_moving = keyboard_moving;
-
-            if self.move_start_grace > 0.0 {
-                self.move_start_grace -= timer.delta;
+            self.input_state.was_moving = keyboard_moving;
+            if self.input_state.move_start_grace > 0.0 {
+                self.input_state.move_start_grace -= dt;
             }
-
-            if self.last_input_time >= 0.3 && keyboard_moving && self.move_start_grace <= 0.0 {
-                self.last_input_time = 0.0;
-
-                let msg = ClientMessage::PlayerUpdate {
-                    input: ClientInput {
-                        left,
-                        up,
-                        right,
-                        down,
-                        mouse_tile_pos: None,
-                    },
-                };
-                self.client
-                    .send(&serialize(&msg).unwrap(), Reliability::Unreliable);
+            if self.input_state.last_input_time >= 0.3
+                && keyboard_moving
+                && self.input_state.move_start_grace <= 0.0
+            {
+                self.input_state.last_input_time = 0.0;
+                self.client.send(
+                    &serialize(&ClientMessage::PlayerUpdate {
+                        input: ClientInput {
+                            left,
+                            up,
+                            right,
+                            down,
+                            mouse_tile_pos: None,
+                        },
+                    })
+                    .unwrap(),
+                    Reliability::Unreliable,
+                );
             }
         }
-
-        self.world.query(
-            |_,
-             _: &Creature,
-             pos: &mut WorldPos,
-             target_pos: &mut TargetWorldPos,
-             spr: &mut Sprite| {
-                if pos.vec != target_pos.vec {
-                    let diff = target_pos.vec - pos.vec;
-                    let dist = diff.length();
-                    let step = move_speed * dt;
-                    if step >= dist {
-                        pos.vec = target_pos.vec;
-                    } else {
-                        pos.vec += diff * (step / dist);
-                    }
-
-                    let dir = if diff.x.abs() > diff.y.abs() {
-                        if diff.x > 0.0 {
-                            Direction::Right
-                        } else {
-                            Direction::Left
-                        }
-                    } else {
-                        if diff.y > 0.0 {
-                            Direction::Down
-                        } else {
-                            Direction::Up
-                        }
-                    };
-                    spr.anim.set_direction(dir);
-                    spr.anim.update_rows(dt, 2);
-                } else {
-                    let col = spr.anim.current % spr.anim.cols;
-                    spr.anim.current = col;
-                }
-            },
-        );
     }
 
     pub fn render(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
         match self.app_state {
-            AppState::Auth => self.render_auth(gfx, egui_ctx),
+            AppState::Auth => self.render_auth(egui_ctx),
             AppState::InGame => self.render_game(gfx, egui_ctx, timer),
         }
     }
 
-    fn render_auth(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context) {
-        gfx.clear(Color::BLACK);
-
+    fn render_auth(&mut self, egui_ctx: &mut &Context) {
         CentralPanel::default().show(egui_ctx, |ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(100.0);
@@ -420,14 +338,14 @@ impl Game {
                 ui.add_space(20.0);
 
                 ui.label("Username");
-                ui.text_edit_singleline(&mut self.auth_username);
+                ui.text_edit_singleline(&mut self.auth_state.username);
                 ui.add_space(5.0);
 
                 ui.label("Password");
-                ui.add(TextEdit::singleline(&mut self.auth_password).password(true));
+                ui.add(TextEdit::singleline(&mut self.auth_state.password).password(true));
                 ui.add_space(10.0);
 
-                if let Some(err) = &self.auth_error {
+                if let Some(err) = &self.auth_state.error {
                     ui.colored_label(Color32::RED, err);
                     ui.add_space(5.0);
                 }
@@ -435,8 +353,8 @@ impl Game {
                 ui.horizontal(|ui| {
                     if ui.button("Login").clicked() {
                         let msg = ClientMessage::Login {
-                            username: self.auth_username.clone(),
-                            password: self.auth_password.clone(),
+                            username: self.auth_state.username.clone(),
+                            password: self.auth_state.password.clone(),
                         };
                         self.client.send(
                             &serialize(&msg).unwrap(),
@@ -445,8 +363,8 @@ impl Game {
                     }
                     if ui.button("Register").clicked() {
                         let msg = ClientMessage::Register {
-                            username: self.auth_username.clone(),
-                            password: self.auth_password.clone(),
+                            username: self.auth_state.username.clone(),
+                            password: self.auth_state.password.clone(),
                         };
                         self.client.send(
                             &serialize(&msg).unwrap(),
@@ -462,151 +380,52 @@ impl Game {
         let screen = gfx.screen_size();
         gfx.clear(Color::BLUE);
 
-        let player_tile = if let Some(player) = self.player {
-            self.world
-                .get::<WorldPos>(player)
-                .map(|pos| self.map.tiled.world_to_tile(pos.vec))
-                .unwrap_or(IVec2::ZERO)
-        } else {
-            IVec2::ZERO
-        };
-
+        let player_tile = self
+            .player
+            .and_then(|p| self.world.get::<WorldPos>(p))
+            .map(|pos| self.map.tiled.world_to_tile(pos.vec))
+            .unwrap_or(IVec2::ZERO);
         self.map.draw_tiles(gfx, player_tile);
 
-        self.world.query(
-            |_, creature: &Creature, world_pos: &WorldPos, spr: &Sprite| {
-                let tex = match creature.kind.as_str() {
-                    "kitty" => self.kitty_tex.unwrap(),
-                    "ghost" => self.ghost_tex.unwrap(),
-                    kind => panic!("unknown creature kind: {}", kind),
-                };
-                gfx.rect()
-                    .at(world_pos.vec - TILE_SIZE / 4.0)
-                    .size(Vec2::splat(TILE_SIZE))
-                    .texture(tex)
-                    .uv(spr.anim.frame());
-            },
-        );
-
-        if let Some(player) = self.player {
-            if let Some(target) = self.world.get::<TargetWorldPos>(player) {
-                if let Some(path) = &target.path {
-                    let tile_size = TILE_SIZE;
-                    let half = tile_size / 2.0;
-
-                    if path.len() >= 2 {
-                        let centers: Vec<Vec2> =
-                            path.iter().map(|&p| p + Vec2::splat(half)).collect();
-                        gfx.polyline()
-                            .points(&centers)
-                            .thickness(1.0)
-                            .color(Color::new([0.0, 0.0, 0.0, 1.0]));
-                    }
-
-                    // draw tile outlines
-                    for &point in path {
-                        let s = tile_size;
-                        gfx.polyline()
-                            .points(&[
-                                point,
-                                point + Vec2::new(s, 0.0),
-                                point + Vec2::new(s, s),
-                                point + Vec2::new(0.0, s),
-                            ])
-                            .closed(true)
-                            .thickness(1.5)
-                            .color(Color::new([0.5, 0.0, 1.0, 0.8]));
-                    }
-                    for &point in path {
-                        gfx.polygon()
-                            .at(point + Vec2::splat(half))
-                            .radius(2.0)
-                            .segments(8)
-                            .color(Color::new([0.5, 0.0, 1.0, 1.0]));
-                    }
-                }
-            }
-        }
-
-        let mut latest_msgs: HashMap<Entity, (String, f32)> = HashMap::new();
-        for (username, text, age) in &self.chat_messages {
-            // find the entity whose username matches
-            if let Some((&_id, (entity, _))) =
-                self.lobby.iter().find(|(_, (_, name))| name == username)
-            {
-                latest_msgs.insert(*entity, (text.clone(), *age));
-            }
-        }
-
-        let mut player_world_pos = Vec2::ZERO;
-
-        self.world
-            .query(|player, _: &Player, world_pos: &WorldPos, spr: &Sprite| {
-                let draw_pos = world_pos.vec - TILE_SIZE / 4.0;
-                gfx.rect()
-                    .at(draw_pos)
-                    .size(Vec2::splat(TILE_SIZE))
-                    .texture(self.player_tex.unwrap())
-                    .uv(spr.anim.frame());
-
-                if Some(player) == self.player {
-                    player_world_pos = world_pos.vec;
-                }
-            });
-
-        self.world
-            .query(|player, _: &Player, world_pos: &WorldPos, _: &Sprite| {
-                if let Some((msg, age)) = latest_msgs.get(&player) {
-                    let alpha = if *age > 8.0 {
-                        1.0 - (*age - 8.0) / 2.0
-                    } else {
-                        1.0
-                    };
-                    let screen_pos = world_pos.vec - player_world_pos + screen / 2.0;
-                    gfx.text(msg)
-                        .at((screen_pos.x, screen_pos.y - 10.0))
-                        .color(Color::new([1.0, 1.0, 1.0, alpha]));
-                }
-            });
-
-        gfx.text(&format!("FPS: {}", timer.fps)).at((10.0, 10.0));
-
-        if let Some(player) = self.player {
-            if let Some(pos) = self.world.get::<WorldPos>(player) {
-                if let Some(target) = self.world.get::<TargetWorldPos>(player) {
-                    let tile = self.map.tiled.world_to_tile(pos.vec);
-                    let target_tile = self.map.tiled.world_to_tile(target.vec);
-                    let hover = self.hovered_tile.unwrap_or(IVec2::ZERO);
-
-                    gfx.text(&format!("World: ({:.0}, {:.0})", pos.vec.x, pos.vec.y))
-                        .at((10.0, 30.0));
-                    gfx.text(&format!("Tile: ({}, {})", tile.x, tile.y))
-                        .at((10.0, 50.0));
-                    gfx.text(&format!(
-                        "Target tile: ({}, {})",
-                        target_tile.x, target_tile.y
-                    ))
-                    .at((10.0, 70.0));
-                    gfx.text(&format!("Hovered tile: ({}, {})", hover.x, hover.y))
-                        .at((10.0, 90.0));
-                }
-            }
+        render::creatures(&self.world, gfx, &self.textures);
+        let player_world_pos = render::players(&self.world, gfx, &self.textures, self.player);
+        if let Some(path) = self
+            .player
+            .and_then(|p| self.world.get::<TargetWorldPos>(p))
+            .and_then(|t| t.path.clone())
+        {
+            render::path(gfx, &path);
         }
 
         if let Some(tile) = self.hovered_tile {
-            let p = self.map.tiled.tile_to_world(tile);
-            let s = TILE_SIZE;
-            gfx.polyline()
-                .points(&[
-                    p,
-                    p + Vec2::new(s, 0.0),
-                    p + Vec2::new(s, s),
-                    p + Vec2::new(0.0, s),
-                ])
-                .closed(true)
-                .thickness(1.5)
-                .color(Color::new([1.0, 0.5, 0.0, 1.0]));
+            render::hover_tile(gfx, tile, &self.map);
         }
+
+        let latest_msgs = self.build_latest_msgs();
+        render::chat_bubbles(&self.world, gfx, &latest_msgs, player_world_pos, screen);
+        self.render_chat(egui_ctx, screen);
+
+        render::debug(
+            gfx,
+            &self.world,
+            self.player,
+            &self.map,
+            self.hovered_tile,
+            timer.fps,
+        );
+    }
+
+    fn build_latest_msgs(&self) -> HashMap<Entity, (String, f32)> {
+        let mut latest = HashMap::new();
+        for (username, text, age) in &self.chat_messages {
+            if let Some((entity, _)) = self.lobby.values().find(|(_, name)| name == username) {
+                latest.insert(*entity, (text.clone(), *age));
+            }
+        }
+        latest
+    }
+
+    fn render_chat(&mut self, egui_ctx: &mut &Context, screen: Vec2) {
         let chat_width = screen.x / 2.0;
         let chat_height = screen.y / 5.0;
         let chat_x = 10.0;

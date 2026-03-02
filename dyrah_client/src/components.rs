@@ -17,6 +17,4 @@ pub struct TargetWorldPos {
 #[derive(Debug)]
 pub struct Sprite {
     pub anim: Animation,
-    pub frame_size: Vec2,
-    pub sprite_size: Vec2,
 }
