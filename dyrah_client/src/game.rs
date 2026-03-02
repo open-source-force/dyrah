@@ -8,6 +8,7 @@ use egor::{
     render::{Color, Graphics},
     time::FrameTimer,
 };
+use rand::{Rng, RngExt, SeedableRng, rngs::SmallRng};
 use secs::{Entity, World};
 use wrym::{
     Reliability,
@@ -15,8 +16,8 @@ use wrym::{
 };
 
 use dyrah_shared::{
-    NetId,
-    components::{Creature, Player},
+    NetId, TILE_SIZE,
+    components::{Creature, Health, Player},
     messages::{ClientInput, ClientMessage, ServerMessage},
 };
 
@@ -28,6 +29,21 @@ use crate::{
     systems::{movement, render},
     texture::TextureManager,
 };
+
+pub struct DamageNumber {
+    pub position: Vec2,
+    pub value: f32,
+    pub age: f32,
+}
+
+pub struct SpellEffect {
+    pub spell: String,
+    pub origin: IVec2,
+    pub affected_tiles: Vec<IVec2>,
+    pub age: f32,
+    pub duration: f32,
+    pub seed: u64,
+}
 
 pub struct AuthState {
     pub username: String,
@@ -61,6 +77,8 @@ pub struct Game {
     auth_state: AuthState,
     input_state: InputState,
     hovered_tile: Option<IVec2>,
+    spell_effects: Vec<SpellEffect>,
+    damage_numbers: Vec<DamageNumber>,
 }
 
 impl Game {
@@ -88,6 +106,8 @@ impl Game {
                 was_moving: false,
             },
             hovered_tile: None,
+            spell_effects: Vec::new(),
+            damage_numbers: Vec::new(),
         }
     }
 
@@ -135,6 +155,7 @@ impl Game {
                 id,
                 username,
                 position,
+                health,
             } => {
                 println!("Player {} ({}) spawned!", id, username);
 
@@ -147,6 +168,10 @@ impl Game {
                     },
                     Sprite {
                         anim: Animation::new(3, 4, 0.2),
+                    },
+                    Health {
+                        current: health,
+                        max: health,
                     },
                 ));
 
@@ -196,6 +221,10 @@ impl Game {
                             path: None,
                         },
                         Sprite { anim },
+                        Health {
+                            current: spawn.health,
+                            max: spawn.health,
+                        },
                     ));
                 }
             }
@@ -205,6 +234,43 @@ impl Game {
                         tgt_pos.vec = m.position;
                     }
                 }
+            }
+            ServerMessage::EntitiesDamaged { entries } => {
+                for entry in entries {
+                    if let Some(mut health) = self.world.get_mut::<Health>(entry.id.into()) {
+                        health.current = entry.current;
+                        health.max = entry.max;
+                    }
+
+                    if let Some(pos) = self.world.get::<WorldPos>(entry.id.into()) {
+                        self.damage_numbers.push(DamageNumber {
+                            position: pos.vec,
+                            value: entry.damage,
+                            age: 0.0,
+                        });
+                    }
+                }
+            }
+            ServerMessage::EntitiesDied { ids } => {
+                for id in ids {
+                    self.world.despawn(id.into());
+                }
+            }
+            ServerMessage::SpellCast {
+                caster_id,
+                spell,
+                origin,
+                affected_tiles,
+                hit_entities,
+            } => {
+                self.spell_effects.push(SpellEffect {
+                    spell,
+                    origin,
+                    affected_tiles,
+                    age: 0.0,
+                    duration: 1.5,
+                    seed: rand::random::<u64>(),
+                });
             }
         }
     }
@@ -231,6 +297,15 @@ impl Game {
         }
 
         let dt = timer.delta;
+
+        self.damage_numbers.retain_mut(|d| {
+            d.age += dt;
+            d.age < 1.0
+        });
+        self.spell_effects.retain_mut(|e| {
+            e.age += dt;
+            e.age < e.duration
+        });
 
         movement::update(&mut self.world, dt);
 
@@ -321,6 +396,16 @@ impl Game {
                 );
             }
         }
+
+        if !egui_focused && input.key_pressed(KeyCode::KeyF) {
+            self.client.send(
+                &serialize(&ClientMessage::CastSpell {
+                    spell: "exevo gran mas flam".into(),
+                })
+                .unwrap(),
+                Reliability::ReliableOrdered { channel: 0 },
+            );
+        }
     }
 
     pub fn render(&mut self, gfx: &mut Graphics, egui_ctx: &mut &Context, timer: &FrameTimer) {
@@ -389,6 +474,28 @@ impl Game {
 
         render::creatures(&self.world, gfx, &self.textures);
         let player_world_pos = render::players(&self.world, gfx, &self.textures, self.player);
+
+        self.world.query(|_, health: &Health, pos: &WorldPos| {
+            let screen_pos = pos.vec;
+            let bar_width = 24.0;
+            let bar_height = 4.0;
+            let hp_frac = (health.current / health.max).clamp(0.0, 1.0);
+            let bar_x = screen_pos.x - bar_width / 2.0;
+            let bar_y = screen_pos.y - 20.0; // above sprite
+
+            // background
+            gfx.rect()
+                .at(Vec2::new(bar_x, bar_y))
+                .size(Vec2::new(bar_width, bar_height))
+                .color(Color::new([0.1, 0.1, 0.1, 1.0]));
+
+            // foreground
+            gfx.rect()
+                .at(Vec2::new(bar_x, bar_y))
+                .size(Vec2::new(bar_width * hp_frac, bar_height))
+                .color(Color::new([0.8, 0.2, 0.2, 1.0]));
+        });
+
         if let Some(path) = self
             .player
             .and_then(|p| self.world.get::<TargetWorldPos>(p))
@@ -399,6 +506,18 @@ impl Game {
 
         if let Some(tile) = self.hovered_tile {
             render::hover_tile(gfx, tile, &self.map);
+        }
+
+        spell_effects(gfx, &self.spell_effects, &self.map);
+        for d in &self.damage_numbers {
+            let offset = Vec2::new(0.0, -d.age * 20.0);
+            let alpha = 1.0 - d.age;
+
+            let screen_pos = gfx.camera().world_to_screen(d.position + offset);
+            gfx.text(&format!("{}", d.value as i32))
+                .at(screen_pos)
+                .size(20.0)
+                .color(Color::new([1.0, 0.3, 0.3, alpha]));
         }
 
         let latest_msgs = self.build_latest_msgs();
@@ -464,4 +583,90 @@ impl Game {
                 }
             });
     }
+}
+
+pub fn spell_effects(gfx: &mut Graphics, effects: &[SpellEffect], map: &crate::map::Map) {
+    for effect in effects {
+        let progress = effect.age / effect.duration; // 0.0 -> 1.0
+        let mut rng = SmallRng::seed_from_u64(effect.seed);
+
+        for &tile in &effect.affected_tiles {
+            let world_pos = map.tiled.tile_to_world(tile);
+            let center = world_pos + Vec2::splat(TILE_SIZE / 2.0);
+            let dist = (tile - effect.origin).as_vec2().length();
+            let max_dist = effect
+                .affected_tiles
+                .iter()
+                .map(|&t| (t - effect.origin).as_vec2().length())
+                .fold(0.0_f32, f32::max);
+
+            // per-tile unique phase from seed + tile position
+            let tile_seed: u64 = rng.next_u64();
+            let phase = (tile_seed as f32 / u64::MAX as f32) * std::f32::consts::TAU;
+
+            // fade out over time, stronger at center
+            let dist_factor = 1.0 - (dist / (max_dist + 1.0));
+            let flicker = (effect.age * 12.0 + phase).sin() * 0.3 + 0.7;
+            let alpha = (1.0 - progress).powf(0.5) * dist_factor * flicker;
+
+            // color: white core -> yellow -> orange -> red at edges
+            let color = lerp_fire_color(dist_factor, alpha);
+
+            // core flame polygon
+            let core_radius = TILE_SIZE * 0.3 * dist_factor * flicker;
+            let rotation = effect.age * 3.0 + phase;
+            gfx.polygon()
+                .at(center)
+                .radius(core_radius)
+                .segments(6)
+                .rotate(rotation)
+                .color(color);
+
+            // inner bright core
+            gfx.polygon()
+                .at(center)
+                .radius(core_radius * 0.4)
+                .segments(6)
+                .rotate(-rotation * 1.5)
+                .color(Color::new([1.0, 1.0, 0.8, alpha]));
+
+            // ember particles — 3 per tile, orbit outward then fade
+            for i in 0..3 {
+                let ember_seed = rng.random_range(0.0_f32..1.0);
+                let ember_phase = phase + i as f32 * std::f32::consts::TAU / 3.0;
+                let orbit = TILE_SIZE * 0.4 * progress * ember_seed;
+                let ember_pos =
+                    center + Vec2::new(ember_phase.cos() * orbit, ember_phase.sin() * orbit);
+                let ember_alpha = alpha * (1.0 - progress) * ember_seed;
+                gfx.polygon()
+                    .at(ember_pos)
+                    .radius(TILE_SIZE * 0.06 * flicker)
+                    .segments(4)
+                    .color(Color::new([1.0, 0.5, 0.1, ember_alpha]));
+            }
+
+            // flame tongue polyline using PathBuilder-style points
+            let tongue_points: Vec<Vec2> = (0..5)
+                .map(|i| {
+                    let t = i as f32 / 4.0;
+                    let wobble =
+                        (effect.age * 8.0 + phase + t * 3.0).sin() * TILE_SIZE * 0.15 * (1.0 - t);
+                    center + Vec2::new(wobble, -TILE_SIZE * 0.4 * t * dist_factor)
+                })
+                .collect();
+
+            gfx.polyline()
+                .points(&tongue_points)
+                .thickness(TILE_SIZE * 0.12 * flicker * dist_factor)
+                .color(Color::new([1.0, 0.7, 0.0, alpha * 0.8]));
+        }
+    }
+}
+
+fn lerp_fire_color(dist_factor: f32, alpha: f32) -> Color {
+    // center: near white-yellow, edges: deep red
+    let r = 1.0;
+    let g = (0.8 * dist_factor).max(0.1);
+    let b = (0.4 * dist_factor).max(0.0) * dist_factor;
+    Color::new([r, g, b, alpha])
 }

@@ -11,14 +11,15 @@ use wrym::{
 
 use dyrah_shared::{
     NetId,
-    components::{Creature, Player},
+    components::{Creature, Health, Player},
     messages::{ClientMessage, CreatureMove, CreatureSpawn, ServerMessage},
 };
 
 use crate::{
-    components::{Collider, TargetTilePos, TilePos},
+    components::{CastCooldown, Collider, TargetTilePos, TilePos},
     db::Database,
     map::{CollisionGrid, Map},
+    systems::spells,
 };
 
 pub struct Game {
@@ -54,6 +55,10 @@ impl Game {
                     vec: pos,
                     path: None,
                     delay: 0.0,
+                },
+                Health {
+                    current: 20.0,
+                    max: 20.0,
                 },
             ));
         }
@@ -219,13 +224,29 @@ impl Game {
                             }
                         }
                     }
+                    ClientMessage::CastSpell { spell } => {
+                        if self.lobby.contains_key(&id) {
+                            spells::handle_cast(
+                                id,
+                                &spell,
+                                &mut self.world,
+                                &self.lobby,
+                                &mut self.server,
+                            );
+                        }
+                    }
                 },
             }
         }
     }
 
     pub fn update(&mut self, dt: f32) {
+        self.world.flush_despawned();
         self.collision_grid.update(&self.map, &self.world);
+
+        self.world.query(|_, cooldown: &mut CastCooldown| {
+            cooldown.remaining = (cooldown.remaining - dt).max(0.0);
+        });
 
         // player path following
         let moving: Vec<(NetId, Entity)> = self
@@ -408,10 +429,12 @@ impl Game {
         // sync existing players to the new client
         for (&other_id, &(player, ref other_name)) in &self.lobby {
             let target_pos = self.world.get::<TargetTilePos>(player).unwrap();
+            let health = self.world.get::<Health>(player).unwrap();
             let msg = ServerMessage::PlayerSpawned {
                 id: other_id,
                 username: other_name.clone(),
                 position: self.map.tiled.tile_to_world(target_pos.vec),
+                health: health.current,
             };
             self.server.send_to(
                 addr,
@@ -421,6 +444,7 @@ impl Game {
         }
 
         let spawn_pos = self.map.get_spawn("player").unwrap();
+        let hp = 100.0;
         let player = self.world.spawn((
             Player,
             TilePos { vec: spawn_pos },
@@ -430,6 +454,11 @@ impl Game {
                 delay: 0.0,
             },
             Collider,
+            CastCooldown { remaining: 0.0 },
+            Health {
+                current: hp,
+                max: hp,
+            },
         ));
         self.lobby.insert(id, (player, username.clone()));
 
@@ -437,6 +466,7 @@ impl Game {
             id,
             username,
             position: self.map.tiled.tile_to_world(spawn_pos),
+            health: hp,
         };
         self.server.broadcast(
             &serialize(&msg).unwrap(),

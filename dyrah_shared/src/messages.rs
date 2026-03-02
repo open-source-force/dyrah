@@ -16,6 +16,14 @@ pub struct CreatureMove {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct DamageEntry {
+    pub id: u64,
+    pub damage: f32,
+    pub current: f32,
+    pub max: f32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub enum ServerMessage {
     AuthSuccess {
         id: NetId,
@@ -29,6 +37,7 @@ pub enum ServerMessage {
         id: NetId,
         username: String,
         position: Vec2,
+        health: f32,
     },
     PlayerDespawned {
         id: NetId,
@@ -40,9 +49,22 @@ pub enum ServerMessage {
     },
     CreatureBatchSpawned(Vec<CreatureSpawn>),
     CreatureBatchMoved(Vec<CreatureMove>),
+    EntitiesDamaged {
+        entries: Vec<DamageEntry>,
+    },
+    EntitiesDied {
+        ids: Vec<u64>,
+    },
     ChatReceived {
         sender_id: NetId,
         text: String,
+    },
+    SpellCast {
+        caster_id: u64,
+        spell: String,
+        origin: IVec2,
+        affected_tiles: Vec<IVec2>,
+        hit_entities: Vec<u64>,
     },
 }
 
@@ -52,6 +74,7 @@ pub enum ClientMessage {
     Register { username: String, password: String },
     PlayerUpdate { input: ClientInput },
     ChatMessage { text: String },
+    CastSpell { spell: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

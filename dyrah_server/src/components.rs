@@ -14,3 +14,6 @@ pub struct TargetTilePos {
 }
 
 pub struct Collider;
+pub struct CastCooldown {
+    pub remaining: f32,
+}

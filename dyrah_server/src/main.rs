@@ -2,6 +2,7 @@ mod components;
 mod db;
 mod game;
 mod map;
+mod systems;
 
 use std::{
     env, thread,
