@@ -6,6 +6,7 @@ use crate::sprite::Animation;
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct WorldPos {
     pub vec: Vec2,
+    pub z: i16,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

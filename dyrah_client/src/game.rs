@@ -156,12 +156,13 @@ impl Game {
                 username,
                 position,
                 health,
+                z,
             } => {
                 println!("Player {} ({}) spawned!", id, username);
 
                 let player = self.world.spawn((
                     Player,
-                    WorldPos { vec: position },
+                    WorldPos { vec: position, z },
                     TargetWorldPos {
                         vec: position,
                         path: None,
@@ -187,7 +188,9 @@ impl Game {
                     self.world.despawn(player);
                 }
             }
-            ServerMessage::PlayerMoved { id, position, path } => {
+            ServerMessage::PlayerMoved {
+                id, position, path, ..
+            } => {
                 if let Some((player, _)) = self.lobby.get(&id) {
                     let mut target_pos = self.world.get_mut::<TargetWorldPos>(*player).unwrap();
                     target_pos.vec = position;
@@ -215,6 +218,7 @@ impl Game {
                         Creature { kind: spawn.kind },
                         WorldPos {
                             vec: spawn.position,
+                            z: spawn.z,
                         },
                         TargetWorldPos {
                             vec: spawn.position,

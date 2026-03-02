@@ -8,6 +8,7 @@ pub struct CreatureSpawn {
     pub kind: String,
     pub position: Vec2,
     pub health: f32,
+    pub z: i16,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CreatureMove {
@@ -38,6 +39,7 @@ pub enum ServerMessage {
         username: String,
         position: Vec2,
         health: f32,
+        z: i16,
     },
     PlayerDespawned {
         id: NetId,
@@ -46,6 +48,7 @@ pub enum ServerMessage {
         id: NetId,
         position: Vec2,
         path: Option<Vec<Vec2>>,
+        z: i16,
     },
     CreatureBatchSpawned(Vec<CreatureSpawn>),
     CreatureBatchMoved(Vec<CreatureMove>),

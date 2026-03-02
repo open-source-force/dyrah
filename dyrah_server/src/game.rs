@@ -40,7 +40,7 @@ impl Game {
                 client_timeout: Duration::from_mins(10),
             },
         );
-        let map = Map::new("assets/map.json");
+        let map = Map::new("assets/map.json", 0);
         let world = World::default();
 
         for (name, pos) in map.get_spawns() {
@@ -50,7 +50,7 @@ impl Game {
 
             world.spawn((
                 Creature { kind: name },
-                TilePos { vec: pos },
+                TilePos::from(pos),
                 TargetTilePos {
                     vec: pos,
                     path: None,
@@ -176,6 +176,7 @@ impl Game {
                                         id,
                                         position: self.map.tiled.tile_to_world(tile_pos.vec),
                                         path: Some(world_path),
+                                        z: tile_pos.z,
                                     };
                                     self.server.broadcast(
                                         &serialize(&msg).unwrap(),
@@ -214,6 +215,7 @@ impl Game {
                                             id,
                                             position: self.map.tiled.tile_to_world(tile_pos.vec),
                                             path: None,
+                                            z: tile_pos.z,
                                         };
                                         self.server.broadcast(
                                             &serialize(&msg).unwrap(),
@@ -274,6 +276,7 @@ impl Game {
                                 id,
                                 position: self.map.tiled.tile_to_world(tile_pos.vec),
                                 path: None,
+                                z: tile_pos.z,
                             };
                             self.server
                                 .broadcast(&serialize(&msg).unwrap(), Reliability::Unreliable);
@@ -417,6 +420,7 @@ impl Game {
                     kind: creature.kind.clone(),
                     position: self.map.tiled.tile_to_world(tile_pos.vec),
                     health: 20.0,
+                    z: tile_pos.z,
                 });
             });
         let msg = ServerMessage::CreatureBatchSpawned(creatures);
@@ -428,14 +432,16 @@ impl Game {
 
         // sync existing players to the new client
         for (&other_id, &(player, ref other_name)) in &self.lobby {
-            let target_pos = self.world.get::<TargetTilePos>(player).unwrap();
+            let tile_pos = self.world.get::<TilePos>(player).unwrap();
             let health = self.world.get::<Health>(player).unwrap();
             let msg = ServerMessage::PlayerSpawned {
                 id: other_id,
                 username: other_name.clone(),
-                position: self.map.tiled.tile_to_world(target_pos.vec),
+                position: self.map.tiled.tile_to_world(tile_pos.vec),
                 health: health.current,
+                z: tile_pos.z,
             };
+
             self.server.send_to(
                 addr,
                 &serialize(&msg).unwrap(),
@@ -447,7 +453,7 @@ impl Game {
         let hp = 100.0;
         let player = self.world.spawn((
             Player,
-            TilePos { vec: spawn_pos },
+            TilePos::from(spawn_pos),
             TargetTilePos {
                 vec: spawn_pos,
                 path: None,
@@ -467,6 +473,7 @@ impl Game {
             username,
             position: self.map.tiled.tile_to_world(spawn_pos),
             health: hp,
+            z: 0,
         };
         self.server.broadcast(
             &serialize(&msg).unwrap(),
