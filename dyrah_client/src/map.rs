@@ -14,7 +14,7 @@ pub struct Tileset {
 pub struct Map {
     pub tiled: TiledMap,
     sets: HashMap<u32, Tileset>,
-    pub current_z: i32,
+    pub current_z: i16,
 }
 
 impl Map {
@@ -74,6 +74,8 @@ impl Map {
                 if tile_id == 0 {
                     continue;
                 }
+                // strip flip/rotate flags from the high bits
+                let tile_id = tile_id & 0x1FFFFFFF;
 
                 let Some(tileset) = self.find_tileset(tile_id) else {
                     continue;
@@ -116,19 +118,19 @@ impl Map {
         }
     }
 
-    fn layer_z(name: &str) -> Option<i32> {
+    fn layer_z(name: &str) -> Option<i16> {
         name.split_once('/')
-            .and_then(|(z, _)| z.parse::<i32>().ok())
+            .and_then(|(z, _)| z.parse::<i16>().ok())
     }
 
-    fn get_roof_layer(&self, player_tile: IVec2) -> Option<i32> {
+    fn get_roof_layer(&self, player_tile: IVec2) -> Option<i16> {
         self.tiled
             .layers
             .iter()
             .filter_map(|l| {
                 l.name
                     .split_once("/roof")
-                    .and_then(|(z, _)| z.parse::<i32>().ok())
+                    .and_then(|(z, _)| z.parse::<i16>().ok())
             })
             .find(|&z| {
                 let layer = format!("{}/roof", z);
@@ -140,7 +142,7 @@ impl Map {
     }
 
     pub fn draw_tiles(&self, gfx: &mut Graphics, player_tile: IVec2) {
-        let inside = self.current_z > 0 || self.get_roof_layer(player_tile).is_some();
+        let inside = self.current_z < 0 || self.get_roof_layer(player_tile).is_some();
 
         for layer in &self.tiled.layers {
             if !layer.visible || layer.data.is_none() {

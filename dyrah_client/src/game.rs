@@ -179,6 +179,7 @@ impl Game {
                 self.lobby.insert(id, (player, username));
                 if Some(id) == self.player_id {
                     self.player = Some(player);
+                    self.map.current_z = z;
                     self.app_state = AppState::InGame;
                 }
             }
@@ -189,13 +190,39 @@ impl Game {
                 }
             }
             ServerMessage::PlayerMoved {
-                id, position, path, ..
+                id,
+                position,
+                path,
+                z,
             } => {
                 if let Some((player, _)) = self.lobby.get(&id) {
+                    let mut world_pos = self.world.get_mut::<WorldPos>(*player).unwrap();
                     let mut target_pos = self.world.get_mut::<TargetWorldPos>(*player).unwrap();
                     target_pos.vec = position;
+                    world_pos.z = z;
                     if path.is_some() {
                         target_pos.path = path;
+                    }
+                    if Some(*player) == self.player {
+                        self.map.current_z = z;
+                    }
+                }
+            }
+            ServerMessage::PlayerChangedFloor {
+                id,
+                position,
+                floor,
+            } => {
+                if let Some((player, _)) = self.lobby.get(&id) {
+                    let mut world_pos = self.world.get_mut::<WorldPos>(*player).unwrap();
+                    let mut target_pos = self.world.get_mut::<TargetWorldPos>(*player).unwrap();
+                    world_pos.vec = position;
+                    world_pos.z = floor;
+                    target_pos.vec = position;
+                    target_pos.path = None;
+
+                    if Some(*player) == self.player {
+                        self.map.current_z = floor;
                     }
                 }
             }
@@ -347,16 +374,19 @@ impl Game {
         ];
         let [left, up, right, down] = buffered;
 
-        let mouse_world_pos = gfx.camera().screen_to_world(input.mouse_position().into());
-        let mouse_tile_pos = input
+        let mouse_world = gfx.camera().screen_to_world(input.mouse_position().into());
+        let mouse_tile = self.map.tiled.world_to_tile(mouse_world);
+
+        self.hovered_tile = Some(mouse_tile);
+
+        let left_click = input
             .mouse_released(MouseButton::Left)
-            .then_some(mouse_world_pos)
-            .map(|mp| self.map.tiled.world_to_tile(mp.into()));
-        self.hovered_tile = Some(self.map.tiled.world_to_tile(mouse_world_pos));
+            .then_some(mouse_tile);
+        let right_click = input
+            .mouse_released(MouseButton::Right)
+            .then_some(mouse_tile);
 
-        self.input_state.last_input_time += dt;
-
-        if mouse_tile_pos.is_some() {
+        if let Some(tile) = left_click {
             self.input_state.last_input_time = 0.0;
             self.client.send(
                 &serialize(&ClientMessage::PlayerUpdate {
@@ -365,40 +395,70 @@ impl Game {
                         up: false,
                         right: false,
                         down: false,
-                        mouse_tile_pos,
+                        left_click: Some(tile),
+                        right_click: None,
                     },
                 })
                 .unwrap(),
                 Reliability::Unreliable,
             );
-        } else {
-            let keyboard_moving = left || up || right || down;
-            if keyboard_moving && !self.input_state.was_moving {
-                self.input_state.move_start_grace = diagonal_buffer;
-            }
-            self.input_state.was_moving = keyboard_moving;
-            if self.input_state.move_start_grace > 0.0 {
-                self.input_state.move_start_grace -= dt;
-            }
-            if self.input_state.last_input_time >= 0.3
-                && keyboard_moving
-                && self.input_state.move_start_grace <= 0.0
-            {
-                self.input_state.last_input_time = 0.0;
-                self.client.send(
-                    &serialize(&ClientMessage::PlayerUpdate {
-                        input: ClientInput {
-                            left,
-                            up,
-                            right,
-                            down,
-                            mouse_tile_pos: None,
-                        },
-                    })
-                    .unwrap(),
-                    Reliability::Unreliable,
-                );
-            }
+
+            return;
+        }
+
+        if let Some(tile) = right_click {
+            self.input_state.last_input_time = 0.0;
+            self.client.send(
+                &serialize(&ClientMessage::PlayerUpdate {
+                    input: ClientInput {
+                        left: false,
+                        up: false,
+                        right: false,
+                        down: false,
+                        left_click: None,
+                        right_click: Some(tile),
+                    },
+                })
+                .unwrap(),
+                Reliability::Unreliable,
+            );
+
+            return;
+        }
+
+        self.input_state.last_input_time += dt;
+
+        let keyboard_moving = left || up || right || down;
+
+        if keyboard_moving && !self.input_state.was_moving {
+            self.input_state.move_start_grace = diagonal_buffer;
+        }
+
+        self.input_state.was_moving = keyboard_moving;
+
+        if self.input_state.move_start_grace > 0.0 {
+            self.input_state.move_start_grace -= dt;
+        }
+
+        if self.input_state.last_input_time >= 0.3
+            && keyboard_moving
+            && self.input_state.move_start_grace <= 0.0
+        {
+            self.input_state.last_input_time = 0.0;
+            self.client.send(
+                &serialize(&ClientMessage::PlayerUpdate {
+                    input: ClientInput {
+                        left,
+                        up,
+                        right,
+                        down,
+                        left_click: None,
+                        right_click: None,
+                    },
+                })
+                .unwrap(),
+                Reliability::Unreliable,
+            );
         }
 
         if !egui_focused && input.key_pressed(KeyCode::KeyF) {

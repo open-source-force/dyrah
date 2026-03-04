@@ -50,6 +50,11 @@ pub enum ServerMessage {
         path: Option<Vec<Vec2>>,
         z: i16,
     },
+    PlayerChangedFloor {
+        id: NetId,
+        position: Vec2,
+        floor: i16,
+    },
     CreatureBatchSpawned(Vec<CreatureSpawn>),
     CreatureBatchMoved(Vec<CreatureMove>),
     EntitiesDamaged {
@@ -86,7 +91,8 @@ pub struct ClientInput {
     pub up: bool,
     pub right: bool,
     pub down: bool,
-    pub mouse_tile_pos: Option<IVec2>,
+    pub left_click: Option<IVec2>,
+    pub right_click: Option<IVec2>,
 }
 
 impl ClientInput {

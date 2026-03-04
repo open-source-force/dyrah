@@ -11,6 +11,12 @@ pub struct TileOffset {
 }
 
 #[derive(Deserialize, Debug)]
+pub struct TiledProperty {
+    pub name: String,
+    pub value: String,
+}
+
+#[derive(Deserialize, Debug)]
 pub struct TiledObject {
     pub id: u32,
     pub name: String,
@@ -18,6 +24,7 @@ pub struct TiledObject {
     pub y: f32,
     pub width: f32,
     pub height: f32,
+    pub properties: Option<Vec<TiledProperty>>,
 }
 
 #[derive(Deserialize, Debug)]

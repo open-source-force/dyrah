@@ -18,7 +18,7 @@ use dyrah_shared::{
 use crate::{
     components::{CastCooldown, Collider, TargetTilePos, TilePos},
     db::Database,
-    map::{CollisionGrid, Map},
+    map::{Map, TileGrid, TileOccupant},
     systems::spells,
 };
 
@@ -28,7 +28,7 @@ pub struct Game {
     pending: HashMap<NetId, String>,
     lobby: HashMap<NetId, (Entity, String)>,
     world: World,
-    collision_grid: CollisionGrid,
+    tile_grid: TileGrid,
     map: Map,
 }
 
@@ -69,7 +69,7 @@ impl Game {
             pending: HashMap::new(),
             lobby: HashMap::new(),
             world,
-            collision_grid: CollisionGrid::new(&map),
+            tile_grid: TileGrid::new(&map),
             map,
         }
     }
@@ -159,11 +159,42 @@ impl Game {
                                 self.world.get_mut::<TargetTilePos>(player).unwrap();
                             let mut tile_pos = self.world.get_mut::<TilePos>(player).unwrap();
 
-                            if let Some(mouse_tile_pos) = input.mouse_tile_pos {
-                                if let Some(path) = self.map.find_path(
+                            if let Some(clicked_tile) = input.right_click {
+                                let pits = self.map.get_objects_on_floor(tile_pos.z, "obstacles");
+
+                                if pits.iter().any(|(_, pos)| {
+                                    pos.x == clicked_tile.x - 1 && pos.y == clicked_tile.y
+                                }) {
+                                    let above = tile_pos.z + 1;
+                                    let holes = self.map.get_objects_on_floor(above, "obstacles");
+
+                                    if let Some((_, hole_pos)) =
+                                        holes.iter().find(|(name, _)| *name == "hole")
+                                    {
+                                        tile_pos.z = above;
+                                        tile_pos.vec = *hole_pos;
+
+                                        target_pos.vec = *hole_pos;
+                                        target_pos.path = None;
+
+                                        let msg = ServerMessage::PlayerChangedFloor {
+                                            id,
+                                            position: self.map.tiled.tile_to_world(*hole_pos),
+                                            floor: above,
+                                        };
+                                        self.server.broadcast(
+                                            &serialize(&msg).unwrap(),
+                                            Reliability::ReliableOrdered { channel: 0 },
+                                        );
+                                    }
+                                }
+                            }
+                            if let Some(mouse_tile_pos) = input.left_click {
+                                if let Some(path) = self.map.find_path_on(
+                                    tile_pos.z,
                                     tile_pos.vec,
                                     mouse_tile_pos,
-                                    &self.collision_grid,
+                                    &self.tile_grid,
                                 ) {
                                     let world_path: Vec<_> = path
                                         .iter()
@@ -187,25 +218,36 @@ impl Game {
                                 let dir = input.to_direction();
                                 if dir != IVec2::ZERO {
                                     let next_pos = tile_pos.vec + dir;
-                                    let walkable = if dir.x != 0 && dir.y != 0 {
-                                        // diagonal: destination + both adjacent cardinals must be clear
-                                        self.map.is_walkable(next_pos, &self.collision_grid)
-                                            && self.map.is_walkable(
-                                                tile_pos.vec + IVec2::new(dir.x, 0),
-                                                &self.collision_grid,
-                                            )
-                                            && self.map.is_walkable(
-                                                tile_pos.vec + IVec2::new(0, dir.y),
-                                                &self.collision_grid,
-                                            )
-                                    } else {
-                                        self.map.is_walkable(next_pos, &self.collision_grid)
-                                    };
 
-                                    if walkable {
+                                    if self.map.is_walkable_at(
+                                        tile_pos.z,
+                                        next_pos,
+                                        &self.tile_grid,
+                                    ) {
                                         target_pos.vec = next_pos;
                                         target_pos.path = None;
                                         tile_pos.vec = next_pos;
+
+                                        if let Some(TileOccupant::Hole(fall_to)) =
+                                            self.tile_grid.get(tile_pos.z, tile_pos.vec)
+                                        {
+                                            tile_pos.z = fall_to;
+                                            target_pos.vec = tile_pos.vec;
+                                            target_pos.path = None;
+
+                                            let msg = ServerMessage::PlayerChangedFloor {
+                                                id,
+                                                position: self
+                                                    .map
+                                                    .tiled
+                                                    .tile_to_world(tile_pos.vec),
+                                                floor: fall_to,
+                                            };
+                                            self.server.broadcast(
+                                                &serialize(&msg).unwrap(),
+                                                Reliability::ReliableOrdered { channel: 0 },
+                                            );
+                                        }
 
                                         // diagonal costs 1.5x more than cardinal
                                         target_pos.delay =
@@ -244,7 +286,6 @@ impl Game {
 
     pub fn update(&mut self, dt: f32) {
         self.world.flush_despawned();
-        self.collision_grid.update(&self.map, &self.world);
 
         self.world.query(|_, cooldown: &mut CastCooldown| {
             cooldown.remaining = (cooldown.remaining - dt).max(0.0);
@@ -266,10 +307,28 @@ impl Game {
             if tile_pos.vec == target_pos.vec && target_pos.delay <= 0.0 {
                 if let Some(path) = target_pos.path.as_mut() {
                     if let Some(next) = path.first().copied() {
-                        if self.map.is_walkable(next, &self.collision_grid) {
+                        if self.map.is_walkable_at(tile_pos.z, next, &self.tile_grid) {
                             path.remove(0);
                             target_pos.vec = next;
                             tile_pos.vec = next;
+
+                            if let Some(TileOccupant::Hole(fall_to)) =
+                                self.tile_grid.get(tile_pos.z, tile_pos.vec)
+                            {
+                                tile_pos.z = fall_to;
+                                target_pos.vec = tile_pos.vec;
+                                target_pos.path = None;
+
+                                let msg = ServerMessage::PlayerChangedFloor {
+                                    id,
+                                    position: self.map.tiled.tile_to_world(tile_pos.vec),
+                                    floor: fall_to,
+                                };
+                                self.server.broadcast(
+                                    &serialize(&msg).unwrap(),
+                                    Reliability::ReliableOrdered { channel: 0 },
+                                );
+                            }
                             target_pos.delay = 0.3;
 
                             let msg = ServerMessage::PlayerMoved {
@@ -288,11 +347,14 @@ impl Game {
             }
         }
 
-        // collect player tile positions for creature AI
-        let player_positions: Vec<IVec2> = self
+        // collect player tile positions with z for creature AI
+        let player_positions: Vec<(IVec2, i16)> = self
             .lobby
             .values()
-            .map(|&(entity, _)| self.world.get::<TilePos>(entity).unwrap().vec)
+            .map(|&(entity, _)| {
+                let tp = self.world.get::<TilePos>(entity).unwrap();
+                (tp.vec, tp.z)
+            })
             .collect();
 
         let creatures: Vec<Entity> = {
@@ -315,7 +377,7 @@ impl Game {
             if tile_pos.vec == target_pos.vec && target_pos.delay <= 0.0 {
                 if let Some(path) = target_pos.path.as_mut() {
                     if let Some(next) = path.first().copied() {
-                        if self.map.is_walkable(next, &self.collision_grid) {
+                        if self.map.is_walkable_at(tile_pos.z, next, &self.tile_grid) {
                             let diagonal = next - tile_pos.vec;
                             path.remove(0);
                             target_pos.vec = next;
@@ -348,7 +410,10 @@ impl Game {
                 // find nearest player in 4 tiles
                 let nearest = player_positions
                     .iter()
-                    .filter_map(|&p| {
+                    .filter_map(|&(p, pz)| {
+                        if pz != tile_pos.z {
+                            return None; // different floor, ignore
+                        }
                         let diff = p - tile_pos.vec;
                         let dist = diff.x.abs().max(diff.y.abs());
                         if dist <= follow_range {
@@ -369,17 +434,19 @@ impl Game {
                     ]
                     .iter()
                     .map(|&d| player_tile + d)
-                    .filter(|&t| self.map.is_walkable(t, &self.collision_grid))
+                    .filter(|&t| self.map.is_walkable_at(tile_pos.z, t, &self.tile_grid))
                     .min_by_key(|&t| {
                         let diff = t - tile_pos.vec;
                         diff.x.abs() + diff.y.abs()
                     });
 
                     if let Some(target_tile) = adjacent {
-                        if let Some(path) =
-                            self.map
-                                .find_path(tile_pos.vec, target_tile, &self.collision_grid)
-                        {
+                        if let Some(path) = self.map.find_path_on(
+                            tile_pos.z,
+                            tile_pos.vec,
+                            target_tile,
+                            &self.tile_grid,
+                        ) {
                             target_pos.path = Some(path);
                         }
                     }
@@ -387,7 +454,7 @@ impl Game {
                     let dir = IVec2::new(rng.gen_range(-1..=1), rng.gen_range(-1..=1));
                     if dir != IVec2::ZERO {
                         let next = tile_pos.vec + dir;
-                        if self.map.is_walkable(next, &self.collision_grid) {
+                        if self.map.is_walkable_at(tile_pos.z, next, &self.tile_grid) {
                             tile_pos.vec = next;
                             target_pos.vec = next;
                             target_pos.delay = if dir.x != 0 && dir.y != 0 { 0.45 } else { 0.3 };
